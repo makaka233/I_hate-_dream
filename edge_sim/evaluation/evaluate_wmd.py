@@ -123,6 +123,7 @@ def evaluate(
     loaded_fast_model, fast_device = load_fast_evaluator(fast_policy, fast_checkpoint_path, device_name)
 
     trace = [[env.sample_requests(slow_epoch=epoch) for _ in range(fast_slots)] for epoch in range(episodes)]
+    bootstrap_keep_previous_x = env.make_deployment("heuristic")
     previous_x = None
     previous_observed_matrix = None
     older_observed_matrix = None
@@ -155,6 +156,8 @@ def evaluate(
                 previous_observed_matrix = state_for_policy["previous_observed_matrix"]
                 older_observed_matrix = state_for_policy["older_observed_matrix"]
                 pool, state = candidate_pool(env, previous_x, previous_observed_matrix, older_observed_matrix, dyn_cfg)
+                if previous_x is None:
+                    pool["keep_previous"] = bootstrap_keep_previous_x.copy()
 
                 feature_rows = np.stack(
                     [encode_candidate_features(env, previous_x, pool[name], name, state) for name in CANDIDATE_NAMES],

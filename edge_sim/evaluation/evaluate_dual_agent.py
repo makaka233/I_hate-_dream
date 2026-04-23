@@ -16,6 +16,9 @@ from edge_sim.env.edge_env import EdgeEnv
 from edge_sim.optim.kkt_allocator import KKTAllocator
 
 
+KEEP_PREVIOUS_ID = CANDIDATE_NAMES.index("keep_previous")
+
+
 def load_agent_d(checkpoint_path: str | Path, device: torch.device) -> tuple[DeploymentCandidatePolicy, dict]:
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=False)
     model = DeploymentCandidatePolicy(
@@ -59,6 +62,94 @@ def _score_agentd_candidates(
     return logits.astype(np.float32), probs.astype(np.float32)
 
 
+def _required_pred_gain(
+    candidate_name: str,
+    base_gain: float,
+    refresh_extra_gain: float,
+    aggressive_extra_gain: float,
+) -> float:
+    threshold = float(base_gain)
+    if candidate_name != "keep_previous" and "refresh" in candidate_name:
+        threshold += float(refresh_extra_gain)
+    if "aggressive" in candidate_name:
+        threshold += float(aggressive_extra_gain)
+    return threshold
+
+
+def _top_margin(probs: np.ndarray) -> float:
+    if probs.size <= 1:
+        return 1.0
+    top2 = np.sort(probs)[-2:]
+    return float(top2[-1] - top2[-2])
+
+
+def _select_guarded_agentd_candidate(
+    pred_total_cost: np.ndarray,
+    agentd_logits: np.ndarray,
+    agentd_probs: np.ndarray,
+    min_prob: float,
+    min_margin: float,
+    base_gain: float,
+    refresh_extra_gain: float,
+    aggressive_extra_gain: float,
+    max_wmd_gap: float,
+    fallback_mode: str,
+    fallback_gain: float,
+) -> tuple[int, dict[str, float | str]]:
+    keep_idx = KEEP_PREVIOUS_ID
+    raw_idx = int(np.argmax(agentd_logits))
+    wmd_idx = int(np.argmin(pred_total_cost))
+    raw_name = CANDIDATE_NAMES[raw_idx]
+    raw_prob = float(agentd_probs[raw_idx])
+    prob_margin = _top_margin(agentd_probs)
+    raw_pred_gain = float(pred_total_cost[keep_idx] - pred_total_cost[raw_idx])
+    wmd_pred_gain = float(pred_total_cost[keep_idx] - pred_total_cost[wmd_idx])
+    required_gain = _required_pred_gain(raw_name, base_gain, refresh_extra_gain, aggressive_extra_gain)
+    wmd_gap = float(pred_total_cost[raw_idx] - pred_total_cost[wmd_idx])
+
+    accept = True
+    reason = "accepted"
+    if raw_idx == keep_idx:
+        reason = "raw_keep_previous"
+    else:
+        if raw_prob < float(min_prob):
+            accept = False
+            reason = "low_prob"
+        elif prob_margin < float(min_margin):
+            accept = False
+            reason = "low_margin"
+        elif raw_pred_gain < required_gain:
+            accept = False
+            reason = "low_pred_gain"
+        elif wmd_gap > float(max_wmd_gap):
+            accept = False
+            reason = "far_from_wmd"
+
+    chosen_idx = raw_idx
+    decision_source = "agentd_raw"
+    if not accept:
+        if fallback_mode == "wmd_if_gain" and wmd_idx != keep_idx and wmd_pred_gain >= float(fallback_gain):
+            chosen_idx = wmd_idx
+            decision_source = "wmd_fallback"
+        else:
+            chosen_idx = keep_idx
+            decision_source = "keep_previous_fallback"
+
+    return chosen_idx, {
+        "agentd_raw_candidate": raw_name,
+        "agentd_raw_prob": raw_prob,
+        "agentd_prob_margin": prob_margin,
+        "agentd_raw_pred_gain": raw_pred_gain,
+        "agentd_required_gain": required_gain,
+        "wmd_best_candidate": CANDIDATE_NAMES[wmd_idx],
+        "wmd_best_pred_gain": wmd_pred_gain,
+        "agentd_wmd_gap": wmd_gap,
+        "guard_reason": reason,
+        "guard_decision_source": decision_source,
+        "guard_triggered": float(chosen_idx != raw_idx),
+    }
+
+
 def evaluate(
     cfg: dict,
     wmd_checkpoint_path: str | Path,
@@ -72,6 +163,14 @@ def evaluate(
     eval_seed: int,
     device_name: str,
     output_path: str | Path | None,
+    agentd_min_prob: float,
+    agentd_min_margin: float,
+    agentd_base_gain: float,
+    agentd_refresh_extra_gain: float,
+    agentd_aggressive_extra_gain: float,
+    agentd_max_wmd_gap: float,
+    agentd_fallback_mode: str,
+    agentd_fallback_gain: float,
 ) -> tuple[Path, dict[str, dict[str, float]]]:
     cfg = dict(cfg)
     cfg["seed"] = int(eval_seed)
@@ -86,13 +185,21 @@ def evaluate(
     loaded_fast_model, fast_device = load_fast_evaluator(fast_policy, fast_checkpoint_path, device_name)
 
     trace = [[env.sample_requests(slow_epoch=epoch) for _ in range(fast_slots)] for epoch in range(episodes)]
+    bootstrap_keep_previous_x = env.make_deployment("heuristic")
 
     if output_path is None:
         output_path = Path("outputs") / "logs" / f"{cfg.get('run_name', 'run')}_dual_agent_eval.csv"
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
-    policies = ["dual_wmd_wms", "dual_agentd_wms", "keep_previous_wms", "history_keep_wms", "trend_keep_wms"]
+    policies = [
+        "dual_wmd_wms",
+        "dual_agentd_wms",
+        "dual_agentd_guarded_wms",
+        "keep_previous_wms",
+        "history_keep_wms",
+        "trend_keep_wms",
+    ]
     totals: dict[str, list[float]] = {name: [] for name in policies}
     policy_state = {
         name: {
@@ -112,6 +219,17 @@ def evaluate(
         "wmd_pred_total_cost",
         "agentd_logit",
         "agentd_prob",
+        "agentd_raw_candidate",
+        "agentd_raw_prob",
+        "agentd_prob_margin",
+        "agentd_raw_pred_gain",
+        "agentd_required_gain",
+        "wmd_best_candidate",
+        "wmd_best_pred_gain",
+        "agentd_wmd_gap",
+        "guard_reason",
+        "guard_decision_source",
+        "guard_triggered",
     ]
 
     with open(output_path, "w", newline="", encoding="utf-8") as f:
@@ -125,6 +243,8 @@ def evaluate(
                 previous_observed_matrix = state_for_policy["previous_observed_matrix"]
                 older_observed_matrix = state_for_policy["older_observed_matrix"]
                 pool, state = candidate_pool(env, previous_x, previous_observed_matrix, older_observed_matrix, dyn_cfg)
+                if previous_x is None:
+                    pool["keep_previous"] = bootstrap_keep_previous_x.copy()
 
                 feature_rows = np.stack(
                     [encode_candidate_features(env, previous_x, pool[name], name, state) for name in CANDIDATE_NAMES],
@@ -135,14 +255,93 @@ def evaluate(
 
                 if policy_name == "dual_wmd_wms":
                     chosen_idx = int(np.argmin(pred_total_cost))
+                    guard_meta = {
+                        "agentd_raw_candidate": CANDIDATE_NAMES[int(np.argmax(agentd_logits))],
+                        "agentd_raw_prob": float(agentd_probs[int(np.argmax(agentd_logits))]),
+                        "agentd_prob_margin": _top_margin(agentd_probs),
+                        "agentd_raw_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmax(agentd_logits))]),
+                        "agentd_required_gain": 0.0,
+                        "wmd_best_candidate": CANDIDATE_NAMES[chosen_idx],
+                        "wmd_best_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[chosen_idx]),
+                        "agentd_wmd_gap": float(pred_total_cost[int(np.argmax(agentd_logits))] - pred_total_cost[chosen_idx]),
+                        "guard_reason": "wmd_planner",
+                        "guard_decision_source": "wmd_planner",
+                        "guard_triggered": 0.0,
+                    }
                 elif policy_name == "dual_agentd_wms":
                     chosen_idx = int(np.argmax(agentd_logits))
+                    guard_meta = {
+                        "agentd_raw_candidate": CANDIDATE_NAMES[chosen_idx],
+                        "agentd_raw_prob": float(agentd_probs[chosen_idx]),
+                        "agentd_prob_margin": _top_margin(agentd_probs),
+                        "agentd_raw_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[chosen_idx]),
+                        "agentd_required_gain": 0.0,
+                        "wmd_best_candidate": CANDIDATE_NAMES[int(np.argmin(pred_total_cost))],
+                        "wmd_best_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "agentd_wmd_gap": float(pred_total_cost[chosen_idx] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "guard_reason": "agentd_raw",
+                        "guard_decision_source": "agentd_raw",
+                        "guard_triggered": 0.0,
+                    }
+                elif policy_name == "dual_agentd_guarded_wms":
+                    chosen_idx, guard_meta = _select_guarded_agentd_candidate(
+                        pred_total_cost,
+                        agentd_logits,
+                        agentd_probs,
+                        agentd_min_prob,
+                        agentd_min_margin,
+                        agentd_base_gain,
+                        agentd_refresh_extra_gain,
+                        agentd_aggressive_extra_gain,
+                        agentd_max_wmd_gap,
+                        agentd_fallback_mode,
+                        agentd_fallback_gain,
+                    )
                 elif policy_name == "keep_previous_wms":
                     chosen_idx = CANDIDATE_NAMES.index("keep_previous")
+                    guard_meta = {
+                        "agentd_raw_candidate": CANDIDATE_NAMES[int(np.argmax(agentd_logits))],
+                        "agentd_raw_prob": float(agentd_probs[int(np.argmax(agentd_logits))]),
+                        "agentd_prob_margin": _top_margin(agentd_probs),
+                        "agentd_raw_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmax(agentd_logits))]),
+                        "agentd_required_gain": 0.0,
+                        "wmd_best_candidate": CANDIDATE_NAMES[int(np.argmin(pred_total_cost))],
+                        "wmd_best_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "agentd_wmd_gap": float(pred_total_cost[int(np.argmax(agentd_logits))] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "guard_reason": "forced_keep_previous",
+                        "guard_decision_source": "forced_keep_previous",
+                        "guard_triggered": 0.0,
+                    }
                 elif policy_name == "history_keep_wms":
                     chosen_idx = CANDIDATE_NAMES.index("history_keep")
+                    guard_meta = {
+                        "agentd_raw_candidate": CANDIDATE_NAMES[int(np.argmax(agentd_logits))],
+                        "agentd_raw_prob": float(agentd_probs[int(np.argmax(agentd_logits))]),
+                        "agentd_prob_margin": _top_margin(agentd_probs),
+                        "agentd_raw_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmax(agentd_logits))]),
+                        "agentd_required_gain": 0.0,
+                        "wmd_best_candidate": CANDIDATE_NAMES[int(np.argmin(pred_total_cost))],
+                        "wmd_best_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "agentd_wmd_gap": float(pred_total_cost[int(np.argmax(agentd_logits))] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "guard_reason": "forced_history_keep",
+                        "guard_decision_source": "forced_history_keep",
+                        "guard_triggered": 0.0,
+                    }
                 elif policy_name == "trend_keep_wms":
                     chosen_idx = CANDIDATE_NAMES.index("trend_keep")
+                    guard_meta = {
+                        "agentd_raw_candidate": CANDIDATE_NAMES[int(np.argmax(agentd_logits))],
+                        "agentd_raw_prob": float(agentd_probs[int(np.argmax(agentd_logits))]),
+                        "agentd_prob_margin": _top_margin(agentd_probs),
+                        "agentd_raw_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmax(agentd_logits))]),
+                        "agentd_required_gain": 0.0,
+                        "wmd_best_candidate": CANDIDATE_NAMES[int(np.argmin(pred_total_cost))],
+                        "wmd_best_pred_gain": float(pred_total_cost[KEEP_PREVIOUS_ID] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "agentd_wmd_gap": float(pred_total_cost[int(np.argmax(agentd_logits))] - pred_total_cost[int(np.argmin(pred_total_cost))]),
+                        "guard_reason": "forced_trend_keep",
+                        "guard_decision_source": "forced_trend_keep",
+                        "guard_triggered": 0.0,
+                    }
                 else:
                     raise ValueError(f"Unsupported policy_name={policy_name!r}")
 
@@ -174,6 +373,7 @@ def evaluate(
                         "wmd_pred_total_cost": float(pred_total_cost[chosen_idx]),
                         "agentd_logit": float(agentd_logits[chosen_idx]),
                         "agentd_prob": float(agentd_probs[chosen_idx]),
+                        **guard_meta,
                     }
                 )
                 totals[policy_name].append(total_cost)
@@ -208,6 +408,14 @@ def main() -> None:
     parser.add_argument("--eval-seed", type=int, default=None)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--agentd-min-prob", type=float, default=0.28)
+    parser.add_argument("--agentd-min-margin", type=float, default=0.06)
+    parser.add_argument("--agentd-base-gain", type=float, default=0.6)
+    parser.add_argument("--agentd-refresh-extra-gain", type=float, default=0.25)
+    parser.add_argument("--agentd-aggressive-extra-gain", type=float, default=0.6)
+    parser.add_argument("--agentd-max-wmd-gap", type=float, default=0.75)
+    parser.add_argument("--agentd-fallback-mode", default="keep_previous", choices=["keep_previous", "wmd_if_gain"])
+    parser.add_argument("--agentd-fallback-gain", type=float, default=1.5)
     args = parser.parse_args()
 
     cfg = load_cfg(args.config)
@@ -227,6 +435,14 @@ def main() -> None:
         eval_seed=eval_seed,
         device_name=args.device,
         output_path=args.output,
+        agentd_min_prob=float(args.agentd_min_prob),
+        agentd_min_margin=float(args.agentd_min_margin),
+        agentd_base_gain=float(args.agentd_base_gain),
+        agentd_refresh_extra_gain=float(args.agentd_refresh_extra_gain),
+        agentd_aggressive_extra_gain=float(args.agentd_aggressive_extra_gain),
+        agentd_max_wmd_gap=float(args.agentd_max_wmd_gap),
+        agentd_fallback_mode=args.agentd_fallback_mode,
+        agentd_fallback_gain=float(args.agentd_fallback_gain),
     )
     print("Dual-agent evaluation")
     for policy, metrics in summary.items():
