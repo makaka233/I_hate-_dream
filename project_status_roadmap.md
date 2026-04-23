@@ -175,7 +175,7 @@
 - 部署动作设计
 - 慢尺度奖励定义
 
-状态：未完成
+状态：已完成初版原型，性能仍需改进
 
 ### 阶段 8：双智能体协同
 
@@ -296,6 +296,24 @@
 - [train_wms_gnn.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/train_wms_gnn.py>)
 - [evaluate_wms_gnn.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_wms_gnn.py>)
 
+### 4.7 WM-D 初版原型
+
+已完成：
+
+- 慢尺度候选部署池生成
+- 候选部署特征编码
+- WM-D 数据集构建
+- WM-D 训练脚本
+- WM-D 初版评估脚本
+
+关键文件：
+
+- [deployment_world_model.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/agents/deployment_world_model.py>)
+- [wmd_utils.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/wmd_utils.py>)
+- [build_wmd_dataset.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/build_wmd_dataset.py>)
+- [train_wmd.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/train_wmd.py>)
+- [evaluate_wmd.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_wmd.py>)
+
 ## 5. 当前最重要实验结论
 
 当前在 `v2_drift`、未见 seed、heuristic deployment 下，快尺度调度表现大致为：
@@ -309,6 +327,7 @@
 - GNN-WM-S 已经优于简单 greedy。
 - 但提升幅度还不大。
 - 当前最佳 WM-S 还没有追平精确 lookahead。
+- WM-D 初版管线已经打通，但当前还未优于 `keep_previous`，说明慢尺度样本稀缺与特征压缩仍需继续优化。
 
 进一步拆分发现：
 
@@ -323,7 +342,7 @@
 - 混合 rollout + hard sample 的 WM-S 数据集
 - 更强的 WM-S 排序学习
 - 更强的闭环调度提升
-- 真正意义上的 WM-D
+- 更强的 WM-D 特征与候选选择
 - Agent-D 的可学习部署策略
 - 双智能体联合闭环
 - 负载扫描实验
@@ -360,7 +379,7 @@
 
 - 把慢尺度部署从启发式推进到世界模型与可学习策略
 
-状态：未开始正式实现
+状态：初版已完成，当前重点是把 WM-D 从“能跑通”提升到“优于 keep_previous/history_keep”
 
 ## 8. 下一阶段建议任务
 
@@ -369,9 +388,10 @@
 1. 完成 mixed rollout GNN-WM-S 数据构建
 2. 增强 difficult decision 样本权重
 3. 重新训练并评估 GNN-WM-S
-4. 若闭环收益明显，再进入负载扫描实验
-5. 在 WM-S 相对稳定后，进入 WM-D 设计与实现
-6. 最后做双智能体联动与完整实验
+4. 继续压缩 WM-D 特征并增强候选部署训练样本
+5. 把 WM-D 提升到优于 `keep_previous`
+6. 在 WM-S 与 WM-D 都相对稳定后，进入双智能体联动
+7. 最后再做多负载实验与完整图表整理
 
 ## 9. GitHub 阶段保存
 
@@ -383,6 +403,8 @@
 
 - 提交：`311f66d`
 - 信息：`Add GNN scheduler world model pipeline`
+- 提交：`2ec0df4`
+- 信息：`Improve GNN WM-S with mixed rollout hard samples`
 
 后续建议：
 
