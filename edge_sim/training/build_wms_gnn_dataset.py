@@ -13,6 +13,7 @@ from edge_sim.optim.kkt_allocator import KKTAllocator, add_stage_to_load
 
 
 TARGET_COLUMNS = ["current_delta", "future_cost", "target_score"]
+BASE_ROLLOUT_POLICIES = ["lookahead_delta", "greedy_delta", "random_legal"]
 
 
 def load_cfg(path: str | Path) -> dict:
@@ -81,6 +82,21 @@ def _choose_rollout_node(
     raise ValueError(f"Unsupported rollout policy: {rollout_policy}")
 
 
+def _choose_rollout(
+    legal_nodes: np.ndarray,
+    targets: np.ndarray,
+    rollout_policy: str,
+    rng: np.random.Generator,
+    mixed_policy_names: list[str],
+    mixed_policy_probs: np.ndarray,
+) -> tuple[int, str]:
+    if rollout_policy != "mixed":
+        return _choose_rollout_node(legal_nodes, targets, rollout_policy, rng), rollout_policy
+
+    chosen_policy = str(rng.choice(np.asarray(mixed_policy_names, dtype=object), p=mixed_policy_probs))
+    return _choose_rollout_node(legal_nodes, targets, chosen_policy, rng), chosen_policy
+
+
 def build_dataset(
     cfg: dict,
     deployment_mode: str,
@@ -89,6 +105,8 @@ def build_dataset(
     lookahead_depth: int,
     future_weight: float,
     rollout_policy: str,
+    mixed_policy_names: list[str],
+    mixed_policy_probs: np.ndarray,
     output_prefix: str | Path | None,
 ) -> tuple[Path, Path, dict[str, float]]:
     cfg = dict(cfg)
@@ -107,10 +125,15 @@ def build_dataset(
     legal_mask_items: list[np.ndarray] = []
     target_items: list[np.ndarray] = []
     best_action_items: list[int] = []
+    greedy_action_items: list[int] = []
     rollout_action_items: list[int] = []
+    rollout_policy_id_items: list[int] = []
+    hard_mask_items: list[bool] = []
+    hard_gap_items: list[float] = []
     meta_rows: list[dict[str, float | int]] = []
     slot_costs: list[float] = []
     slot_requests: list[int] = []
+    policy_to_id = {name: idx for idx, name in enumerate(mixed_policy_names)}
 
     decision_id = 0
     for slow_epoch in range(episodes):
@@ -137,8 +160,20 @@ def build_dataset(
                         lookahead_depth,
                         future_weight,
                     )
-                    rollout_node = _choose_rollout_node(legal_nodes, targets, rollout_policy, env.rng)
-                    best_node = int(legal_nodes[int(np.argmin(targets[legal_nodes, 2]))])
+                    best_scores = targets[legal_nodes, 2]
+                    greedy_scores = targets[legal_nodes, 0]
+                    best_node = int(legal_nodes[int(np.argmin(best_scores))])
+                    greedy_node = int(legal_nodes[int(np.argmin(greedy_scores))])
+                    hard_mask = bool(greedy_node != best_node)
+                    hard_gap = float(targets[greedy_node, 2] - targets[best_node, 2])
+                    rollout_node, rollout_policy_name = _choose_rollout(
+                        legal_nodes,
+                        targets,
+                        rollout_policy,
+                        env.rng,
+                        mixed_policy_names,
+                        mixed_policy_probs,
+                    )
 
                     node_feat_items.append(obs["node_feat"].astype(np.float32))
                     edge_attr_items.append(obs["edge_attr"].astype(np.float32))
@@ -148,7 +183,11 @@ def build_dataset(
                     legal_mask_items.append(legal_mask)
                     target_items.append(targets)
                     best_action_items.append(best_node)
+                    greedy_action_items.append(greedy_node)
                     rollout_action_items.append(rollout_node)
+                    rollout_policy_id_items.append(policy_to_id[rollout_policy_name])
+                    hard_mask_items.append(hard_mask)
+                    hard_gap_items.append(hard_gap)
                     meta_rows.append(
                         {
                             "decision_id": decision_id,
@@ -160,8 +199,12 @@ def build_dataset(
                             "stage_idx": stage_idx,
                             "prev_node": prev_node,
                             "best_action": best_node,
+                            "greedy_action": greedy_node,
                             "rollout_action": rollout_node,
+                            "rollout_policy_id": policy_to_id[rollout_policy_name],
                             "candidate_count": int(legal_nodes.size),
+                            "hard_flag": int(hard_mask),
+                            "hard_gap": hard_gap,
                             "best_target_score": float(targets[best_node, 2]),
                         }
                     )
@@ -198,8 +241,12 @@ def build_dataset(
             "stage_idx",
             "prev_node",
             "best_action",
+            "greedy_action",
             "rollout_action",
+            "rollout_policy_id",
             "candidate_count",
+            "hard_flag",
+            "hard_gap",
             "best_target_score",
         ]
         writer = csv.DictWriter(f, fieldnames=fieldnames)
@@ -218,7 +265,12 @@ def build_dataset(
         targets=np.asarray(target_items, dtype=np.float32),
         target_columns=np.asarray(TARGET_COLUMNS),
         best_action=np.asarray(best_action_items, dtype=np.int64),
+        greedy_action=np.asarray(greedy_action_items, dtype=np.int64),
         rollout_action=np.asarray(rollout_action_items, dtype=np.int64),
+        rollout_policy_id=np.asarray(rollout_policy_id_items, dtype=np.int64),
+        rollout_policy_names=np.asarray(mixed_policy_names),
+        hard_mask=np.asarray(hard_mask_items, dtype=np.bool_),
+        hard_gap=np.asarray(hard_gap_items, dtype=np.float32),
         decision_ids=np.arange(decision_id, dtype=np.int64),
     )
 
@@ -228,6 +280,7 @@ def build_dataset(
         "episodes": float(episodes),
         "fast_slots": float(fast_slots),
         "avg_candidates_per_decision": float(np.mean([row["candidate_count"] for row in meta_rows])) if meta_rows else 0.0,
+        "hard_ratio": float(np.mean(hard_mask_items)) if hard_mask_items else 0.0,
         "avg_slot_delay": float(np.mean(slot_costs)) if slot_costs else 0.0,
         "avg_requests_per_slot": float(np.mean(slot_requests)) if slot_requests else 0.0,
     }
@@ -243,7 +296,18 @@ def main() -> None:
     parser.add_argument("--fast-slots", type=int, default=None)
     parser.add_argument("--lookahead-depth", type=int, default=2)
     parser.add_argument("--future-weight", type=float, default=0.8)
-    parser.add_argument("--rollout-policy", default="lookahead_delta", choices=["lookahead_delta", "greedy_delta", "random_legal"])
+    parser.add_argument(
+        "--rollout-policy",
+        default="lookahead_delta",
+        choices=["lookahead_delta", "greedy_delta", "random_legal", "mixed"],
+    )
+    parser.add_argument(
+        "--mixed-policies",
+        nargs="+",
+        default=BASE_ROLLOUT_POLICIES,
+        choices=BASE_ROLLOUT_POLICIES,
+    )
+    parser.add_argument("--mixed-policy-probs", type=float, nargs="+", default=None)
     parser.add_argument("--output-prefix", default=None)
     args = parser.parse_args()
 
@@ -260,6 +324,17 @@ def main() -> None:
             f"{run_name}_{deployment_mode}_{args.rollout_policy}_gnn_d{args.lookahead_depth}_s{cfg['seed']}"
         )
 
+    mixed_policy_names = list(dict.fromkeys(args.mixed_policies))
+    if args.mixed_policy_probs is None:
+        mixed_policy_probs = np.full(len(mixed_policy_names), 1.0 / len(mixed_policy_names), dtype=np.float32)
+    else:
+        if len(args.mixed_policy_probs) != len(mixed_policy_names):
+            raise ValueError("mixed-policy-probs must match the number of mixed-policies.")
+        mixed_policy_probs = np.asarray(args.mixed_policy_probs, dtype=np.float32)
+        if np.any(mixed_policy_probs < 0):
+            raise ValueError("mixed-policy-probs must be non-negative.")
+        mixed_policy_probs = mixed_policy_probs / max(float(mixed_policy_probs.sum()), 1e-8)
+
     csv_path, npz_path, summary = build_dataset(
         cfg=cfg,
         deployment_mode=deployment_mode,
@@ -268,6 +343,8 @@ def main() -> None:
         lookahead_depth=int(args.lookahead_depth),
         future_weight=float(args.future_weight),
         rollout_policy=args.rollout_policy,
+        mixed_policy_names=mixed_policy_names,
+        mixed_policy_probs=mixed_policy_probs,
         output_prefix=output_prefix,
     )
     print("GNN WM-S dataset built")

@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from torch import nn
+import torch.nn.functional as F
 from torch.utils.data import DataLoader, TensorDataset
 
 from edge_sim.agents.scheduler_world_model import SchedulerGNNWorldModel
@@ -24,6 +25,9 @@ def _load_datasets(paths: list[str | Path]) -> dict[str, np.ndarray]:
         "legal_mask": [],
         "targets": [],
         "best_action": [],
+        "greedy_action": [],
+        "hard_mask": [],
+        "hard_gap": [],
         "decision_ids": [],
     }
     edge_index = None
@@ -45,6 +49,39 @@ def _load_datasets(paths: list[str | Path]) -> dict[str, np.ndarray]:
                 ids = data[key].astype(np.int64) + decision_offset
                 chunks[key].append(ids)
                 decision_offset = int(ids.max()) + 1 if ids.size else decision_offset
+            elif key == "greedy_action":
+                if key in data.files:
+                    chunks[key].append(data[key].astype(np.int64))
+                else:
+                    legal = data["legal_mask"].astype(bool)
+                    current_delta = np.where(legal, data["targets"][:, :, 0], np.inf)
+                    chunks[key].append(np.argmin(current_delta, axis=1).astype(np.int64))
+            elif key == "hard_mask":
+                if key in data.files:
+                    chunks[key].append(data[key].astype(np.bool_))
+                else:
+                    if "greedy_action" in data.files:
+                        greedy_action = data["greedy_action"].astype(np.int64)
+                    else:
+                        legal = data["legal_mask"].astype(bool)
+                        current_delta = np.where(legal, data["targets"][:, :, 0], np.inf)
+                        greedy_action = np.argmin(current_delta, axis=1).astype(np.int64)
+                    chunks[key].append((greedy_action != data["best_action"].astype(np.int64)).astype(np.bool_))
+            elif key == "hard_gap":
+                if key in data.files:
+                    chunks[key].append(data[key].astype(np.float32))
+                else:
+                    legal = data["legal_mask"].astype(bool)
+                    target_score = data["targets"][:, :, 2]
+                    best_action = data["best_action"].astype(np.int64)
+                    if "greedy_action" in data.files:
+                        greedy_action = data["greedy_action"].astype(np.int64)
+                    else:
+                        current_delta = np.where(legal, data["targets"][:, :, 0], np.inf)
+                        greedy_action = np.argmin(current_delta, axis=1).astype(np.int64)
+                    best_score = target_score[np.arange(target_score.shape[0]), best_action]
+                    greedy_score = target_score[np.arange(target_score.shape[0]), greedy_action]
+                    chunks[key].append((greedy_score - best_score).astype(np.float32))
             else:
                 chunks[key].append(data[key])
 
@@ -102,10 +139,69 @@ def _masked_mse(
     target: torch.Tensor,
     legal_mask: torch.Tensor,
     loss_weights: torch.Tensor,
+    sample_weights: torch.Tensor,
 ) -> torch.Tensor:
     mask = legal_mask.unsqueeze(-1).float()
-    weighted = ((pred - target) ** 2) * mask * loss_weights.view(1, 1, -1)
-    return weighted.sum() / torch.clamp(mask.sum() * loss_weights.sum(), min=1.0)
+    weighted = ((pred - target) ** 2) * mask * loss_weights.view(1, 1, -1) * sample_weights.view(-1, 1, 1)
+    denom = torch.clamp((legal_mask.float().sum(dim=1) * sample_weights).sum() * loss_weights.sum(), min=1.0)
+    return weighted.sum() / denom
+
+
+def _ranking_ce(
+    pred: torch.Tensor,
+    target: torch.Tensor,
+    legal_mask: torch.Tensor,
+    target_mean: torch.Tensor,
+    target_std: torch.Tensor,
+    future_weight: float,
+    rank_temperature: float,
+    sample_weights: torch.Tensor,
+) -> torch.Tensor:
+    pred_raw = pred * target_std.view(1, 1, -1) + target_mean.view(1, 1, -1)
+    target_raw = target * target_std.view(1, 1, -1) + target_mean.view(1, 1, -1)
+    pred_score = target_raw[:, :, 0].detach() + future_weight * pred_raw[:, :, 1]
+    true_score = target_raw[:, :, 2]
+
+    pred_logits = (-pred_score / max(rank_temperature, 1e-6)).masked_fill(~legal_mask.bool(), -1e9)
+    true_best = true_score.masked_fill(~legal_mask.bool(), 1e9).argmin(dim=1)
+    loss = F.cross_entropy(pred_logits, true_best, reduction="none")
+    return (loss * sample_weights).sum() / torch.clamp(sample_weights.sum(), min=1.0)
+
+
+def _ranking_ce_np(
+    pred: np.ndarray,
+    target: np.ndarray,
+    legal_mask: np.ndarray,
+    target_mean: np.ndarray,
+    target_std: np.ndarray,
+    future_weight: float,
+    rank_temperature: float,
+    sample_weights: np.ndarray,
+) -> float:
+    pred_raw = pred * target_std.reshape(1, 1, -1) + target_mean.reshape(1, 1, -1)
+    target_raw = target * target_std.reshape(1, 1, -1) + target_mean.reshape(1, 1, -1)
+    legal = legal_mask.astype(bool)
+    pred_score = target_raw[:, :, 0] + future_weight * pred_raw[:, :, 1]
+    true_score = np.where(legal, target_raw[:, :, 2], np.inf)
+    true_best = np.argmin(true_score, axis=1)
+
+    logits = -pred_score / max(rank_temperature, 1e-6)
+    logits = np.where(legal, logits, -1e9)
+    logits = logits - logits.max(axis=1, keepdims=True)
+    log_probs = logits - np.log(np.exp(logits).sum(axis=1, keepdims=True) + 1e-12)
+    losses = -log_probs[np.arange(log_probs.shape[0]), true_best]
+    return float(np.sum(losses * sample_weights) / max(float(sample_weights.sum()), 1e-8))
+
+
+def _make_sample_weights(hard_mask: np.ndarray, hard_gap: np.ndarray, hard_weight: float) -> np.ndarray:
+    weights = np.ones(hard_mask.shape[0], dtype=np.float32)
+    weights[hard_mask.astype(bool)] = float(hard_weight)
+    positive_gap = np.maximum(hard_gap.astype(np.float32), 0.0)
+    if np.any(positive_gap > 0):
+        scale = float(np.percentile(positive_gap[positive_gap > 0], 75))
+        if scale > 1e-8:
+            weights += hard_mask.astype(np.float32) * np.clip(positive_gap / scale, 0.0, 1.5)
+    return weights
 
 
 def _predict(
@@ -137,6 +233,7 @@ def _metrics(
     pred: np.ndarray,
     true: np.ndarray,
     legal_mask: np.ndarray,
+    hard_mask: np.ndarray,
     target_mean: np.ndarray,
     target_std: np.ndarray,
     future_weight: float,
@@ -152,6 +249,14 @@ def _metrics(
     true_best = np.argmin(true_score, axis=1)
     pred_best = np.argmin(pred_target_score, axis=1)
     exact_future_best = np.argmin(exact_delta_pred_future, axis=1)
+    hard = hard_mask.astype(bool)
+    easy = ~hard
+
+    def _subset_acc(choice: np.ndarray, truth: np.ndarray, subset: np.ndarray) -> float:
+        if not np.any(subset):
+            return 0.0
+        return float(np.mean(choice[subset] == truth[subset]))
+
     return {
         "mae_current_delta": float(np.mean(np.abs(err[:, 0]))),
         "mae_future_cost": float(np.mean(np.abs(err[:, 1]))),
@@ -159,6 +264,11 @@ def _metrics(
         "rmse_target_score": float(np.sqrt(np.mean(err[:, 2] ** 2))),
         "top1_pred_target_score": float(np.mean(pred_best == true_best)),
         "top1_exact_delta_pred_future": float(np.mean(exact_future_best == true_best)),
+        "hard_ratio": float(np.mean(hard)),
+        "top1_pred_target_score_hard": _subset_acc(pred_best, true_best, hard),
+        "top1_pred_target_score_easy": _subset_acc(pred_best, true_best, easy),
+        "top1_exact_delta_pred_future_hard": _subset_acc(exact_future_best, true_best, hard),
+        "top1_exact_delta_pred_future_easy": _subset_acc(exact_future_best, true_best, easy),
     }
 
 
@@ -173,6 +283,9 @@ def train(
     layers: int,
     request_dim: int,
     loss_weights: list[float],
+    rank_coef: float,
+    rank_temperature: float,
+    hard_weight: float,
     val_fraction: float,
     future_weight: float,
     seed: int,
@@ -184,6 +297,9 @@ def train(
     tensors = _apply_normalizers(data, norm)
     tensors["prev_node"] = data["prev_node"].astype(np.int64)
     tensors["legal_mask"] = data["legal_mask"].astype(np.bool_)
+    tensors["hard_mask"] = data["hard_mask"].astype(np.bool_)
+    tensors["hard_gap"] = data["hard_gap"].astype(np.float32)
+    sample_weights = _make_sample_weights(tensors["hard_mask"], tensors["hard_gap"], hard_weight)
 
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -201,6 +317,8 @@ def train(
     loss_weight_t = torch.as_tensor(loss_weights, dtype=torch.float32, device=device)
     if loss_weight_t.numel() != len(TARGET_COLUMNS):
         raise ValueError(f"loss_weights must contain {len(TARGET_COLUMNS)} values.")
+    target_mean_t = torch.as_tensor(norm["target_mean"], dtype=torch.float32, device=device)
+    target_std_t = torch.as_tensor(norm["target_std"], dtype=torch.float32, device=device)
 
     train_ds = TensorDataset(
         torch.from_numpy(tensors["node_feat"][train_idx]),
@@ -210,6 +328,7 @@ def train(
         torch.from_numpy(tensors["prev_node"][train_idx]),
         torch.from_numpy(tensors["targets"][train_idx]),
         torch.from_numpy(tensors["legal_mask"][train_idx]),
+        torch.from_numpy(sample_weights[train_idx]),
     )
     generator = torch.Generator()
     generator.manual_seed(seed)
@@ -220,7 +339,7 @@ def train(
     for epoch in range(1, epochs + 1):
         model.train()
         train_losses = []
-        for node_feat, edge_attr, cand_edge, req_feat, prev_node, targets, legal_mask in loader:
+        for node_feat, edge_attr, cand_edge, req_feat, prev_node, targets, legal_mask, batch_weights in loader:
             node_feat = node_feat.to(device)
             edge_attr = edge_attr.to(device)
             cand_edge = cand_edge.to(device)
@@ -228,10 +347,22 @@ def train(
             prev_node = prev_node.to(device)
             targets = targets.to(device)
             legal_mask = legal_mask.to(device)
+            batch_weights = batch_weights.to(device)
 
             optimizer.zero_grad(set_to_none=True)
             pred = model(node_feat, edge_index, edge_attr, cand_edge, req_feat, prev_node)
-            loss = _masked_mse(pred, targets, legal_mask, loss_weight_t)
+            mse_loss = _masked_mse(pred, targets, legal_mask, loss_weight_t, batch_weights)
+            rank_loss = _ranking_ce(
+                pred,
+                targets,
+                legal_mask,
+                target_mean_t,
+                target_std_t,
+                future_weight,
+                rank_temperature,
+                batch_weights,
+            )
+            loss = mse_loss + rank_coef * rank_loss
             loss.backward()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
@@ -240,7 +371,22 @@ def train(
         val_pred = _predict(model, edge_index, tensors, val_idx, batch_size, device)
         val_target = tensors["targets"][val_idx]
         val_mask = tensors["legal_mask"][val_idx]
-        val_loss = float(np.mean(((val_pred - val_target) ** 2)[val_mask]))
+        val_weights = sample_weights[val_idx]
+        val_sqerr = ((val_pred - val_target) ** 2).mean(axis=2)
+        valid_counts = np.maximum(val_mask.sum(axis=1), 1)
+        per_sample_mse = (val_sqerr * val_mask).sum(axis=1) / valid_counts
+        val_mse = float(np.sum(per_sample_mse * val_weights) / max(float(val_weights.sum()), 1e-8))
+        val_rank = _ranking_ce_np(
+            val_pred,
+            val_target,
+            val_mask,
+            norm["target_mean"],
+            norm["target_std"],
+            future_weight,
+            rank_temperature,
+            val_weights,
+        )
+        val_loss = val_mse + rank_coef * val_rank
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_state = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
@@ -262,6 +408,7 @@ def train(
         val_pred,
         tensors["targets"][val_idx],
         tensors["legal_mask"][val_idx],
+        tensors["hard_mask"][val_idx],
         norm["target_mean"],
         norm["target_std"],
         future_weight,
@@ -291,6 +438,9 @@ def train(
             "layers": int(layers),
             "request_dim": int(request_dim),
             "loss_weights": [float(x) for x in loss_weights],
+            "rank_coef": float(rank_coef),
+            "rank_temperature": float(rank_temperature),
+            "hard_weight": float(hard_weight),
             "metrics": metrics,
         },
         output_path,
@@ -310,6 +460,9 @@ def main() -> None:
     parser.add_argument("--layers", type=int, default=2)
     parser.add_argument("--request-dim", type=int, default=32)
     parser.add_argument("--loss-weights", type=float, nargs=3, default=[0.3, 1.0, 0.3])
+    parser.add_argument("--rank-coef", type=float, default=0.2)
+    parser.add_argument("--rank-temperature", type=float, default=0.05)
+    parser.add_argument("--hard-weight", type=float, default=3.0)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--future-weight", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=7)
@@ -327,6 +480,9 @@ def main() -> None:
         layers=int(args.layers),
         request_dim=int(args.request_dim),
         loss_weights=[float(x) for x in args.loss_weights],
+        rank_coef=float(args.rank_coef),
+        rank_temperature=float(args.rank_temperature),
+        hard_weight=float(args.hard_weight),
         val_fraction=float(args.val_fraction),
         future_weight=float(args.future_weight),
         seed=int(args.seed),
