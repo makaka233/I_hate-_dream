@@ -1,0 +1,85 @@
+seed: 7
+run_name: v2_drift
+
+system:
+  num_nodes: 10
+  users_per_node: 5
+  num_services: 5
+  service_stages: [2, 3, 2, 4, 2]
+  slow_period: 20
+
+topology:
+  mode: clustered
+  num_clusters: 2
+  bandwidth_min: 60.0
+  bandwidth_max: 120.0
+  inter_bandwidth_min: 25.0
+  inter_bandwidth_max: 55.0
+
+resources:
+  compute_min: 90.0
+  compute_max: 130.0
+  storage_capacity: 90.0
+  memory_capacity: 90.0
+  service_storage_min: 4.0
+  service_storage_max: 9.0
+  service_memory_min: 3.0
+  service_memory_max: 7.0
+
+requests:
+  poisson_lambda: 1.0
+  service_distribution:
+    mode: drifting
+    drift_strength: 0.45
+    drift_period: 8
+  node_distribution:
+    mode: drifting_hotspots
+    hotspot_strength: 0.75
+    hotspot_width: 2.0
+    hotspot_period: 10
+    service_locality_strength: 0.65
+  compute_min: 2.0
+  compute_max: 7.0
+  input_data_min: 2.0
+  input_data_max: 6.0
+  stage_data_decay_min: 0.55
+  stage_data_decay_max: 0.85
+  perturb_low: 0.9
+  perturb_high: 1.1
+
+deployment:
+  mode: heuristic
+  min_replicas: 1
+  max_replicas: 2
+
+dynamic_deployment:
+  max_replicas_per_stage: 3
+  extra_replica_budget: 13
+  migration_weight: 0.1
+  change_threshold: 0.08
+  history_trend_beta: 0.5
+  alpha_compute: 1.0
+  alpha_data: 0.5
+  location_weight: 1.2
+  keep_previous: true
+
+training:
+  episodes: 60
+  fast_slots_per_episode: 20
+  omega_batch_reward: 0.5
+  device: cpu
+  learning_rate: 0.0003
+  gamma: 0.99
+  clip_ratio: 0.2
+  ppo_epochs: 2
+  minibatch_size: 64
+  max_update_samples: 128
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+
+model:
+  hidden_dim: 64
+  heads: 4
+  gat_layers: 2
+  request_dim: 32

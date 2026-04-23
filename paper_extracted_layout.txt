@@ -1,0 +1,867 @@
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                              1
+
+
+
+
+       Redundant Staged Service Placement and Task
+       Offloading Optimization in Collaborative Edge
+        Computing: A World-Model-KKT Approach
+                                                             Anonymous Author(s)
+
+
+
+   Abstract—With the rapid development of 5G/6G, the Internet                 service structures. Service placement, task offloading, and
+of Things, industrial Internet, and edge intelligence, an increasing          resource allocation have therefore become core issues in edge
+number of latency-sensitive applications require collaborative                computing. On the one hand, service instances should be
+processing over multiple edge nodes. In such scenarios, complex
+services are no longer monolithic; instead, they are increasingly             placed over resource-limited edge nodes. On the other hand,
+decomposed into multiple ordered processing stages. This trend                user tasks should be offloaded to appropriate nodes for pro-
+leads to a coupled optimization problem involving staged service              cessing, while computing and communication resources must
+placement, stage-level task offloading, node computing resource               be coordinated accordingly [2], [3]. For complex applications,
+allocation, and inter-edge link bandwidth allocation. To address              service execution is often sequential and stage-dependent.
+this issue, this paper establishes a unified optimization model
+for collaborative edge computing and minimizes the total end-                 Once a service is decomposed into multiple ordered stages,
+to-end system delay under service placement, task offloading,                 the system must determine not only the placement of each
+node capacity, and link bandwidth constraints. Considering that               sub-service, but also the execution node of each task stage,
+service placement and task offloading are discrete decisions, while           as well as the corresponding node computing resources and
+computing and bandwidth allocation are continuous variables, we               inter-edge link bandwidths for cross-node stage transitions.
+further transform the original mixed-integer nonlinear problem
+into a hierarchical framework. At the upper level, a world-                      Under this setting, the considered problem faces four main
+model-driven hierarchical decision framework determines service               challenges. First, service placement and task offloading are
+placement and task offloading decisions. At the lower level, after            strongly coupled. A task stage can only be processed by a
+fixing the discrete decisions, the continuous resource allocation             node that has already placed the corresponding sub-service.
+problem is decomposed into convex node-level and link-level                   Hence, placement decisions directly determine the feasible
+subproblems, and the closed-form optimal solutions are derived
+via the Karush-Kuhn-Tucker (KKT) conditions. Specifically,                    offloading set, while the offloading results in turn affect
+the optimal node computing resources and link bandwidths                      node workloads and the placement benefit [4]–[6]. Second,
+are shown to follow square-root proportional allocation rules.                computing resources and communication resources are jointly
+Based on these results, a world-model-KKT collaborative solution              constrained. When adjacent stages are processed at different
+framework is developed, which improves the efficiency of upper-               nodes, additional inter-edge transmission delay is introduced
+level decision generation while preserving the global optimality
+of the lower-level continuous resource allocation.                            and becomes tightly coupled with node-level computing delay
+                                                                              [3], [8]. Third, different decision variables naturally operate at
+  Index Terms—Edge computing, staged services, service place-                 different update frequencies. Service placement usually incurs
+ment, task offloading, DRL, KKT, resource allocation.
+                                                                              container preparation and migration overhead and is therefore
+                                                                              unsuitable for frequent updates, whereas task offloading and
+                         I. I NTRODUCTION                                     resource allocation should react to task arrivals in a much
+                                                                              shorter timescale [2]. Fourth, the original optimization prob-
+W       ITH the rapid development of 5G/6G, the Internet of
+        Things (IoT), industrial Internet, and edge intelligence,
+applications such as augmented reality, intelligent manufactur-
+                                                                              lem contains both binary and continuous variables and exhibits
+                                                                              clear mixed-integer nonlinear characteristics, which makes
+ing, Internet of Vehicles, urban sensing, and real-time video                 direct end-to-end optimization or direct DRL over the entire
+analytics have imposed increasingly stringent requirements on                 action space highly challenging [2], [11].
+low latency, high reliability, and localized computing capabil-                  To address the above issues, this paper investigates redun-
+ity. Compared with the conventional cloud-centric paradigm                    dant staged service placement and stage-level task offloading
+that forwards all service requests to remote data centers, mo-                in collaborative edge computing. We first build a unified model
+bile edge computing (MEC) pushes computation and storage                      that jointly describes sub-service placement, stage-level task
+capabilities to the network edge and thus provides a promising                offloading, node computing resource allocation, and inter-
+solution for low-latency service provisioning [1], [11].                      edge link bandwidth allocation. Then, by minimizing the total
+   Meanwhile, the service paradigm at the edge is evolving                    end-to-end system delay, we formulate a joint optimization
+from monolithic applications to fine-grained and orchestratable               problem under placement, offloading, computing, bandwidth,
+                                                                              memory, and storage constraints. Considering the heteroge-
+  This manuscript is converted from the current Chinese draft into an IEEE    neous nature of the decision variables, we adopt a hierarchical
+journal LATEX paper format. The terminology follows the user’s requirement:
+placement is used for service deployment and offloading is used for task      strategy: the upper level uses DRL to determine staged service
+scheduling.                                                                   placement and task offloading decisions, whereas the lower
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                    2
+
+
+
+level derives the optimal continuous resource allocation by        B. Joint Optimization of Service Placement, Task Offloading,
+KKT after the discrete decisions are fixed.                        and Resource Allocation
+   The main contributions of this paper are summarized as             Another line of work more closely related to our study is
+follows.                                                           the joint optimization of service placement, task offloading,
+   1) We establish a unified optimization model for col-           and resource allocation. Fan et al. jointly considered service
+      laborative edge computing with staged services. The          placement, task scheduling, computing resource allocation,
+      model jointly considers redundant sub-service place-         and transmission rate allocation in edge-cloud collaborative
+      ment, stage-level task offloading, node computing re-        networks and coordinated the solution process across different
+      source allocation, and inter-edge link bandwidth alloca-     timescales [3]. More recently, Fan et al. proposed a dual-agent
+      tion.                                                        DRL framework for multi-sensor and multi-user edge com-
+   2) We rigorously transform the continuous resource allo-        puting networks, where service placement, task scheduling,
+      cation part into convex subproblems and derive closed-       transmit power allocation, computing resource allocation, and
+      form optimal solutions based on the KKT conditions.          transmission rate allocation are jointly optimized in a task-
+      The resulting expressions show that both node comput-        data-decoupled setting [2].
+      ing resources and link bandwidth are optimally allocated        These works clearly indicate that, as edge systems become
+      according to square-root proportional rules.                 increasingly complex, optimizing a single type of decision
+   3) We develop a world-model-KKT hierarchical solution           variable in isolation is generally insufficient. Instead, a system-
+      framework. The upper layer uses a deployment world           level view is required to jointly consider service placement,
+      model and a scheduler world model to generate discrete       task offloading, and resource allocation. Existing joint op-
+      placement and offloading decisions, while the lower-         timization works are mostly request-centric, task-centric, or
+      level KKT module provides globally optimal continu-          task-data-decoupled. In contrast, the present study explicitly
+      ous resource allocation under fixed discrete decisions,      models the sequential processing chain of staged services and
+      thereby improving both tractability and theoretical rigor.   derives the optimal continuous resource allocation in a closed
+   The remainder of this paper is organized as follows. Sec-       form under stage-dependent service execution.
+tion II reviews the most relevant studies in the past three
+years and presents a comparison table. Section III establishes
+                                                                   C. Dependency-Aware Microservice Modeling and Dependent
+the system model and formulates the joint optimization prob-
+                                                                   Task Offloading
+lem. Section IV transforms the original problem, derives the
+optimal continuous resource allocation based on KKT, and              As edge applications evolve from monolithic services to
+develops the world-model-KKT algorithmic framework.                microservices and multi-stage processing chains, service de-
+                                                                   pendency and task dependency have attracted increasing atten-
+                     II. R ELATED W ORK                            tion. Wang et al. proposed a dependency-aware microservice
+                                                                   placement scheme using network representation and DRL,
+A. Service Placement and Request Routing
+                                                                   which improves the placement quality of dependent microser-
+   In the recent literature on edge service orchestration, one     vices [7]. Lou et al. studied dependent task scheduling under
+important line of research focuses on the joint optimization of    bandwidth constraints and startup-awareness, which is highly
+service placement and request routing. Peng et al. studied the     relevant to stage-dependent execution in edge environments
+joint optimization of service deployment and request routing       [8]. Dai et al. investigated the offloading of dependent tasks
+for microservices in MEC and demonstrated the significant          with unknown system-side information, showing the impor-
+coupling between placement locations and routing strategies        tance of considering dependency structures when system-side
+[4]. Hu et al. further incorporated multi-objective DRL into       conditions are uncertain [9].
+microservice deployment and routing over collaborative edge           These studies demonstrate that dependency structures are
+environments, revealing that service granularity and service       already a key issue in edge computing research. Nonetheless,
+dependency can significantly affect both deployment gain           from the modeling perspective, existing works mainly focus on
+and transmission overhead [5]. Peng et al. also investigated       either dependency-aware microservice placement or dependent
+fine-grained microservice deployment and routing with delay        task scheduling/offloading. They rarely integrate dependency
+awareness, which further pushed the research frontier from         structure, service placement, stage-level offloading, and ana-
+coarse service instances to more refined service structures [6].   lytically derived continuous resource allocation into a unified
+   These studies provide important insights for our work:          framework. This gap motivates the study carried out in this
+service placement should not be considered independently           paper.
+of request or task routing; fine-grained service dependen-
+cies substantially affect communication overhead; and static
+optimization is often insufficient in dynamic environments,        D. Deep Reinforcement Learning and Multi-Timescale Solu-
+which motivates the use of online learning or reinforcement        tion Frameworks
+learning. Nevertheless, most of these studies mainly focus            Deep reinforcement learning has been widely used in edge
+on microservice deployment and routing, rather than explicit       computing because it can learn near-optimal decisions through
+stage-level task execution with analytical continuous resource     environmental interaction even when the system model is com-
+allocation.                                                        plex or partially unknown [11]. In the recent literature, Wang et
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                         3
+
+
+
+                                                                 TABLE I
+                                    D IFFERENCE B ETWEEN O UR S CHEME AND THE M AIN R ELATED S CHEMES
+
+                           Service     Task    Resource Stage-/Dependency- Edge-Edge Different Optimization DRL-
+                 Schemes
+                          Placement Offloading Allocation  Aware Service   Collaborative  Frequencies       Based
+                   [2]        ✓         ✓          ✓            ×               ✓              ✓             ✓
+                   [3]        ✓         ✓          ✓            ×               ×              ✓             ×
+                   [4]        ✓         ✓          ×            ✓               ✓              ×             ×
+                   [5]        ✓         ✓          ×            ✓               ✓              ×             ✓
+                   [6]        ✓         ✓          ×            ✓               ✓              ×             ✓
+                   [7]        ✓         ×          ×            ✓               ×              ×             ✓
+                   [8]        ×         ✓          ×            ✓               ✓              ×             ×
+                   [9]        ×         ✓          ×            ✓               ×              ×             ×
+                  [10]        ✓         ✓          ✓            ✓               ✓              ×             ✓
+               Our scheme     ✓         ✓          ✓            ✓               ✓              ✓             ✓
+
+
+
+al. applied reinforcement learning to microservice placement          section gives a fuller description of the collaborative edge
+and request routing while further incorporating DVFS to               environment, the staged service execution mechanism, and
+jointly optimize delay and energy [10]. Fan et al. pointed out        the complete delay expressions, while keeping the original
+that service placement and task scheduling/resource allocation        optimization objective and the core modeling assumptions
+naturally operate at different update timescales in practical         unchanged.
+systems and therefore proposed a dual-agent DRL framework
+with heterogeneous update frequencies [2].                            A. Network Architecture and Staged Service Description
+   The above studies suggest that a hierarchical and multi-
+timescale optimization framework is better aligned with prac-             We consider a collaborative edge computing system with
+tical system operation. In our problem, this observation is par-      M edge nodes, where each edge node is equipped with one
+ticularly important because staged service placement should           edge server. The set of all edge nodes is denoted by M =
+be updated infrequently, whereas stage-level task offloading          {1, . . . , M }. For any two edge nodes Em and Em′ , a binary
+and continuous resource allocation must respond quickly to            topology indicator am,m′ is introduced to describe whether
+task arrivals. Hence, the current paper adopts a world-model-         the two nodes are directly connected. When am,m′ = 1,
+KKT hierarchical solution architecture that combines upper-           the two nodes can communicate through an inter-edge link
+level world-model-based decision generation with lower-level          whose maximum available transmission rate is Rm,m′ . When
+analytical optimization.                                              am,m′ = 0, direct data transmission between the two nodes
+                                                                      is not allowed, and therefore no direct cross-stage forwarding
+E. Summary of Existing Studies and Positioning of This Work           can be performed over that pair of nodes.
+   Overall, the representative studies from 2023–2025 have                Let Nm denote the number of users covered by edge node
+achieved substantial progress in service placement, request           Em , and let Um,n denote the nth user associated with edge
+routing, task offloading, dependency-aware modeling, and              node Em . Each user submits service requests to its affiliated
+DRL-based decision making. However, three limitations re-             edge node first, and then the request may continue to be
+main. First, most studies still focus on request routing or           processed locally or be forwarded to other edge nodes accord-
+task offloading instead of explicitly modeling a staged service       ing to the staged service placement and stage-level offloading
+execution chain. Second, although some works jointly consider         decisions. This paper considers a set of service types I =
+service placement, task offloading, and resource allocation, the      {1, . . . , I}. Since complex applications are generally executed
+structural decomposition between discrete decisions and con-          in multiple ordered processing stages, service i is decomposed
+tinuous resource variables remains insufficient. Third, existing      into Ji staged sub-services, denoted by Si,1 , Si,2 , . . . , Si,Ji .
+multi-timescale methods generally rely on numerical or black-         Correspondingly, for the request of service i generated by user
+box treatments for continuous variables, rather than rigorously       Um,n , the stage-j task is denoted by Km,n,i,j .
+deriving closed-form optimal solutions.                                   The above modeling means that each user request of service
+   Accordingly, this paper focuses on redundant staged service        i is no longer processed in one monolithic step. Instead, it
+placement and stage-level task offloading in collaborative edge       forms an ordered execution chain Km,n,i,1 → Km,n,i,2 →
+computing. The relationship between the present study and             · · · → Km,n,i,Ji . The output of one stage becomes the input of
+recent representative studies is summarized in Table I. The pro-      the next stage. If two adjacent stages are executed on different
+posed scheme jointly models staged service structure, stage-          edge nodes, the intermediate result produced by the previous
+level offloading, and analytical continuous resource allocation,      stage must be transmitted through an inter-edge link before
+while maintaining a hierarchical solution architecture with           the next stage can start. Therefore, the end-to-end latency of
+different update frequencies for heterogeneous decisions.             a request depends jointly on the placement locations of the
+                                                                      staged sub-services, the offloading destinations of each task
+   III. S YSTEM M ODEL AND P ROBLEM F ORMULATION                      stage, the node computing resources allocated to each active
+  The main notations used in this paper are summarized in             stage, and the link bandwidth allocated to each inter-node
+Table II. Compared with the previous abbreviated version, this        transmission.
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                                 4
+
+
+
+                                                                       TABLE II
+                                                              M AIN N OTATION S UMMARY
+
+                   Symbol            Type                  Definition                                                             Unit
+               M = {1, . . . , M }   set                   Set of edge nodes                                                       –
+                    Um,n             user                  The nth user covered by edge node Em                                    –
+                     Nm              parameter             Number of users covered by edge node Em                                 –
+               I = {1, . . . , I}    set                   Set of service types                                                    –
+                     Ji              parameter             Number of stages of service i                                           –
+                    Si,j             sub-service           The jth staged sub-service of service i                                 –
+                 Km,n,i,j            task stage            The stage-j task of service i generated by user Um,n                    –
+                   am,m′             parameter             Direct connectivity indicator between edge nodes Em and Em′             –
+                   Rm,m′             parameter             Bandwidth upper bound of inter-edge link (Em , Em′ )                   MB/s
+                     Fm              parameter             Total computing resource of edge node Em                            CPU cycles/s
+                  Am , B m           parameter             Total storage and memory capacities of edge node Em                    MB
+                  ai,j , bi,j        parameter             Static storage and memory occupation of staged sub-service             MB
+                                                           Si,j
+                   Cm,n,i,j          parameter             Computing workload required by task stage Km,n,i,j                     CPU cycles
+                   Dm,n,i            parameter             Data size sent from the affiliated node to the first-stage execu-         MB
+                                                           tion node
+                   Dm,n,i,j          parameter             Output data size after stage j of service i for task Km,n,i,j             MB
+                    xi,j,m′          binary variable       Placement indicator of sub-service Si,j on edge node Em′                   –
+                  ym,n,i,j,m′        binary variable       Offloading indicator: whether task stage Km,n,i,j is offloaded             –
+                                                           to Em′
+                  fm′ ,m,n,i,j       continuous variable   Computing resource allocated by Em′ to task stage Km,n,i,j          CPU cycles/s
+                 rm,n,i,0,m,m′       continuous variable   Link rate from affiliated node Em to the first-stage execution         MB/s
+                                                           node Em′
+                rm,n,i,j,m′ ,m′′     continuous variable   Link rate for transmitting the output of stage j from Em′ to             MB/s
+                                                           Em′′
+
+
+
+   Each edge node is resource-constrained and is characterized                 placement status of sub-service Si,j on edge node Em′ . If
+by three types of local capacities. Specifically, edge node Em′                xi,j,m′ = 1, then node Em′ places sub-service Si,j and
+has total storage capacity Am′ , total memory capacity Bm′ ,                   can therefore provide the corresponding stage-j processing
+and total computing resource Fm′ . Placing staged sub-service                  capability for service i. Otherwise, if xi,j,m′ = 0, sub-service
+Si,j on node Em′ incurs a static storage occupation ai,j and a                 Si,j is not available on node Em′ . Since the placement variable
+static memory occupation bi,j . Executing task stage Km,n,i,j                  is binary, it should satisfy
+requires computing workload Cm,n,i,j . Moreover, let Dm,n,i
+                                                                                             xi,j,m′ ∈ {0, 1},
+denote the data size that needs to be transmitted from the                                                                                      (3)
+affiliated edge node Em to the first-stage execution node, and                                        ∀i ∈ I, j = 1, . . . , Ji , m′ ∈ M.
+let Dm,n,i,j denote the intermediate output data size after                      Once a staged sub-service is placed, it occupies static
+stage j is completed. These parameters jointly determine the                   memory and storage resources on the selected node. The total
+communication load caused by stage transitions.                                memory occupation caused by all placed staged sub-services
+   For notational convenience, the ordered stage set of the                    on edge node Em′ can be written explicitly as
+request of service i generated by user Um,n is denoted by
+                                                                                                         Ji
+                                                                                                       I X
+                                                                                                       X
+                                                                                              plc
+        Km,n,i = {Km,n,i,1 , Km,n,i,2 , . . . , Km,n,i,Ji }.           (1)                   Bm ′ =              xi,j,m′ bi,j ,     ∀m′ ∈ M,    (4)
+                                                                                                       i=1 j=1
+Accordingly, the stage-transition set of the same request is
+                                                                               and the total storage occupation caused by staged service
+  Em,n,i = {(Km,n,i,j , Km,n,i,j+1 ) | j = 1, . . . , Ji − 1}. (2)             placement on edge node Em′ is
+Equations (1) and (2) clarify that a service request is character-                                       Ji
+                                                                                                       I X
+                                                                                                       X
+ized by both intra-stage computation and inter-stage forward-                                Aplc
+                                                                                              m′ =               xi,j,m′ ai,j ,      ∀m′ ∈ M.   (5)
+ing. Hence, once one stage is assigned to a different node from                                        i=1 j=1
+its successor, a cross-node transmission process is triggered                  Since the static occupations cannot exceed the local capacities
+before the next stage starts. This stage-chain structure is the                of each node, the following placement-capacity constraints
+fundamental reason why placement, offloading, computing                        must hold:
+allocation, and link-rate allocation must be optimized jointly
+                                                                                               Ji
+                                                                                             I X
+rather than independently.                                                                   X
+                                                                                                       xi,j,m′ bi,j ≤ Bm′ ,         ∀m′ ∈ M,    (6)
+                                                                                             i=1 j=1
+B. Staged Service Placement Model
+                                                                                               Ji
+                                                                                             I X
+   The first type of decision concerns where each staged sub-
+                                                                                             X
+                                                                                                       xi,j,m′ ai,j ≤ Am′ ,         ∀m′ ∈ M.    (7)
+service is placed. Let the binary variable xi,j,m′ indicate the                              i=1 j=1
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                     5
+
+
+
+Equations (3), (6), and (7) together characterize the feasible       offloading decisions. It makes clear that the request path is
+placement space of staged sub-services.                              stage-dependent and may span multiple edge nodes, which in
+                                                                     turn leads to intermediate-result transmission among different
+C. Stage-Level Task Offloading Model                                 stages.
+   After the sub-services are placed, the system determines
+where each task stage is executed. Let ym,n,i,j,m′ be the stage-
+level offloading indicator for task Km,n,i,j . If ym,n,i,j,m′ =      D. Node Computing Resource Allocation Model
+1, then the jth stage of the request generated by user Um,n             In addition to binary placement and offloading decisions,
+for service i is offloaded to edge node Em′ for execution.           the system must allocate continuous computing resources to
+Otherwise, the stage is not executed on Em′ .                        the task stages that are actually executed on each node. Let
+   A task stage can only be offloaded to an edge node                fm′ ,m,n,i,j denote the computing resource allocated by node
+that has already placed the corresponding staged sub-service.        Em′ to task stage Km,n,i,j . A positive computing allocation
+Therefore, the placement and offloading decisions must satisfy       can only be assigned when two conditions are simultaneously
+the following consistency constraint:                                satisfied: sub-service Si,j has been placed on Em′ , and task
+        ym,n,i,j,m′ ≤ xi,j,m′ ,                                      stage Km,n,i,j has been offloaded to Em′ . Therefore, the
+                      ∀m ∈ M, n = 1, . . . , Nm , i ∈ I,       (8)   following effective-allocation constraint holds:
+                         j = 1, . . . , Ji , m′ ∈ M.                   0 ≤ fm′ ,m,n,i,j ≤ xi,j,m′ ym,n,i,j,m′ Fm′ ,
+Moreover, each task stage can only be executed by one                                  ∀m, m′ ∈ M, n = 1, . . . , Nm , i ∈ I, (14)
+and only one edge node. Hence, the stage-level uniqueness
+                                                                                         j = 1, . . . , Ji .
+constraint is expressed as
+      M
+      X                                                              In addition, the total computing resources allocated by node
+              ym,n,i,j,m′ = 1,                                       Em′ to all active task stages cannot exceed its local computing
+      m′ =1                                                    (9)   capacity Fm′ , namely
+                         ∀m ∈ M, n = 1, . . . , Nm , i ∈ I,
+                                                                                    Nm X
+                                                                                  M X    Ji
+                                                                                       I X
+                            j = 1, . . . , Ji .                                   X
+                                                                                                      fm′ ,m,n,i,j ≤ Fm′ ,
+To emphasize that the whole service request must finish all                       m=1 n=1 i=1 j=1
+                                                                                                                                   (15)
+of its stages, the original complete-processing condition is                                                            ′
+                                                                                                                    ∀m ∈ M.
+preserved as
+ Ji X
+ X  M                                                                The actual computing load assigned to node Em′ can therefore
+              ym,n,i,j,m′ = Ji ,                                     be summarized as
+  j=1 m′ =1
+                                                              (10)
+                                                                                    Nm X
+                                                                                  M X    Ji
+                                                                                       I X
+                         ∀m ∈ M, n = 1, . . . , Nm , i ∈ I.                       X
+                                                                          use
+                                                                         Fm ′ =                       fm′ ,m,n,i,j ,    ∀m′ ∈ M,   (16)
+Finally, the offloading decision is also binary:                                  m=1 n=1 i=1 j=1
+
+        ym,n,i,j,m′ ∈ {0, 1},                                                                                         use
+                                                                     and constraint (15) is equivalently written as Fm  ′  ≤ Fm′ .
+                      ∀m ∈ M, n = 1, . . . , Nm , i ∈ I,      (11)   Equation (16) shows that the local computing burden of a
+                         j = 1, . . . , Ji , m′ ∈ M.                 node is jointly shaped by the offloading destinations of all
+                                                                     users and all service stages.
+Equations (8)–(11) jointly guarantee that each stage is of-
+floaded to a feasible and unique execution node and that all            Under a given placement and offloading decision, the stage-
+stages of each request are completely processed.                     level computing delay on node Em′ is inversely proportional
+   Based on the one-hot property implied by (9), the execution       to the allocated computing resource and proportional to the
+node index of stage j of request (m, n, i) can be written as         required workload. Hence, the computing delay of task stage
+the auxiliary quantity                                               Km,n,i,j executed on node Em′ is written as
+                                 M
+                                                                                      xi,j,m′ ym,n,i,j,m′ Cm,n,i,j
+                                                                         tcomp
+                                 X
+                  πm,n,i,j =           m′ ym,n,i,j,m′ ,       (12)        m′ ,m,n,i,j =
+                                                                                               fm′ ,m,n,i,j
+                                                                                                                   ,
+                               m′ =1                                                                                               (17)
+                                                                                    ∀m, m′ ∈ M, n = 1, . . . , Nm , i ∈ I,
+which yields a unique node index because exactly one off-
+loading indicator is equal to one for each stage. Therefore, the                       j = 1, . . . , Ji .
+execution path of the entire staged request can be represented
+                                                                     Accordingly, the total computing delay of the service-i request
+by the ordered node sequence
+                                                                    generated by user Um,n can be fully expanded as
+         Πm,n,i = πm,n,i,1 , πm,n,i,2 , . . . , πm,n,i,Ji . (13)
+                                                                                      Ji X
+                                                                                         M
+Equation (13) does not introduce a new optimization variable;               comp
+                                                                                      X    xi,j,m′ ym,n,i,j,m′ Cm,n,i,j
+                                                                           Tm,n,i =                                           .    (18)
+instead, it is an explicit representation derived from the binary                     j=1 m′ =1
+                                                                                                             fm′ ,m,n,i,j
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                                  6
+
+
+
+E. Inter-Edge Transmission Rate Allocation Model                             optimization. Therefore, the complete end-to-end delay of
+   When the request of user Um,n reaches its affiliated edge                 request (m, n, i) can be written as
+node Em , the first stage may be processed locally or may be                                                                 comp
+offloaded to another edge node. If the first stage is executed                                  Tem,n,i = tacc      tran
+                                                                                                           m,n,i + Tm,n,i + Tm,n,i .            (24)
+by another node Em′ , the original request data of size Dm,n,i
+must be transmitted from Em to Em′ . Let rm,n,i,0,m,m′ denote                Since tacc
+                                                                                     m,n,i is constant with respect to x, y, f , and r,
+the allocated rate for this transmission. In addition, if stage j            minimizing Tem,n,i is equivalent to minimizing the optimizable
+                                                                                   tran     comp
+is executed on node Em′ and stage j + 1 is executed on node                  part Tm,n,i +Tm,n,i . For this reason, the following delay model
+Em′′ , then the intermediate output data of size Dm,n,i,j must               focuses on the transmission and computing terms only. After
+be sent from Em′ to Em′′ with allocated rate rm,n,i,j,m′ ,m′′ .              the request arrives at the affiliated node Em , the transmission
+   For each physical inter-edge link (Em , Em′ ), the sum of all             delay from Em to the first-stage execution node is explicitly
+rates allocated to first-stage transmissions and all intermediate            given by
+stage-to-stage transmissions using that link cannot exceed
+                                                                                                              M
+the link bandwidth upper bound Rm,m′ . Therefore, the link-                                      tran,0
+                                                                                                              X ym,n,i,1,m′ Dm,n,i
+capacity constraint is                                                                          Tm,n,i  =                          .            (25)
+                                                                                                              ′
+                                                                                                                  rm,n,i,0,m,m′
+                                                                                                            m =1
+   Nm X
+      I                          Nm̄ X
+                               M X      i −1
+                                     I JX                                                                   m′ ̸=m
+   X                           X
+             rm,n,i,0,m,m′ +                 rm̄,n̄,i,j,m,m′
+   n=1 i=1                 m̄=1 n̄=1 i=1 j=1                                 Next, for each stage transition from stage j to stage j + 1, the
+                                                                             intermediate output transmission delay is
+                     ≤ Rm,m′ , ∀m, m′ ∈ M, m ̸= m′ . (19)
+To make the link-occupancy relation more explicit, define the                                   M       M
+                                                                                   tran,j
+                                                                                                X       X  ym,n,i,j,m′ ym,n,i,j+1,m′′ Dm,n,i,j
+total utilized rate of inter-edge link (Em , Em′ ) as                             Tm,n,i  =                                                    ,
+                                                                                                                     rm,n,i,j,m′ ,m′′
+                                                                                                        ′′
+                                                                                               m′ =1 m =1
+              Nm X
+                 I                          Nm̄ X
+                                          M X      i −1
+                                                I JX                                                m′′ ̸=m′
+              X                           X
+   use
+  Rm,m ′ =              rm,n,i,0,m,m′ +                       rm̄,n̄,i,j,m,m′ .               j = 1, . . . , Ji − 1.
+              n=1 i=1                     m̄=1 n̄=1 i=1 j=1                                                                            (26)
+                                                                            (20)
+                                                                            By combining the first transmission and all stage-to-stage
+for all m, m′ ∈ M with m ̸= m′ . Then (19) is equivalently                  transmissions, the total transmission delay of request (m, n, i)
+                  use                                                       can be fully expanded as
+expressed as Rm,m     ′ ≤ Rm,m′ . This equivalent form high-
+
+lights that each physical link is shared by two categories of
+                                                                                                M
+traffic: the transmission from the affiliated node to the first-                   tran
+                                                                                                X ym,n,i,1,m′ Dm,n,i
+stage execution node and the intermediate-result transmission                     Tm,n,i =
+                                                                                                ′
+                                                                                                    rm,n,i,0,m,m′
+                                                                                              m =1
+between two consecutive stages. Since all transmission rates                                  m′ ̸=m
+are physical quantities, they must be nonnegative. Hence,                              i −1 X
+                                                                                      JX    M     M
+                                                                                                  X  ym,n,i,j,m′ ym,n,i,j+1,m′′ Dm,n,i,j
+rm,n,i,0,m,m′ ≥ 0,                                                                +                                                      . (27)
+                                                                                                  ′′
+                                                                                      j=1 m′ =1 m =1
+                                                                                                               rm,n,i,j,m′ ,m′′
+              ∀m, m′ ∈ M, m ̸= m′ , n = 1, . . . , Nm , i ∈ I.                                 m′′ ̸=m′
+                                                          (21)
+rm,n,i,j,m′ ,m′′ ≥ 0,                                                        Similarly, according to (18), the total computing delay of
+                ∀m, m′ , m′′ ∈ M, m′ ̸= m′′ , n = 1, . . . , Nm ,            request (m, n, i) is
+                    i ∈ I, j = 1, . . . , Ji − 1.
+                                                                                                  Ji X
+                                                                                                     M
+                                                           (22)                         comp
+                                                                                                  X    xi,j,m′ ym,n,i,j,m′ Cm,n,i,j
+For compactness, (21) and (22) are jointly referred to as the                          Tm,n,i =                                           .     (28)
+                                                                                                  j=1 m′ =1
+                                                                                                                       fm′ ,m,n,i,j
+nonnegative-rate constraint (23). When two adjacent stages are
+executed on the same edge node, i.e., m′ = m′′ , no inter-edge
+                                                                             Therefore, the end-to-end delay of the service-i request gen-
+transmission is needed and the corresponding link-rate variable
+                                                                             erated by user Um,n is
+is naturally zero.
+Constraint (23) :      rm,n,i,0,m,m′ ≥ 0,           rm,n,i,j,m′ ,m′′ ≥ 0.                       M
+                                                                                                X ym,n,i,1,m′ Dm,n,i
+                                                                     (23)         Tm,n,i =
+                                                                                                ′
+                                                                                                    rm,n,i,0,m,m′
+                                                                                              m =1
+                                                                                              m′ ̸=m
+F. Delay Model of Staged Service Execution
+                                                                                           i −1 X
+                                                                                          JX    M      M
+  The total delay of a staged service request consists of trans-
+                                                                                                       X  ym,n,i,j,m′ ym,n,i,j+1,m′′ Dm,n,i,j
+                                                                                      +
+mission delay and computing delay. First, let tacc                                                                  rm,n,i,j,m′ ,m′′
+                                               m,n,i denote the                                        ′′
+                                                                                          j=1 m′ =1 m =1
+access delay from user Um,n to its affiliated edge node Em                                         m′′ ̸=m′
+when requesting service i. According to the original modeling                                           Ji X
+                                                                                                           M
+                                                                                                        X    xi,j,m′ ym,n,i,j,m′ Cm,n,i,j
+assumption, this access delay is determined by the underlying                                       +                                         . (29)
+                                                                                                        j=1 m′ =1
+                                                                                                                           fm′ ,m,n,i,j
+hardware and access network and does not participate in
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                                7
+
+
+
+Finally, the total system delay over all users and all service           variables, directly solving P1 is difficult. To address this
+requests is given by                                                     issue, this section transforms P1 into a hierarchical solution
+                                                                         framework. The upper layer uses DRL to determine x and y,
+                M XNm X I  M
+               X           X ym,n,i,1,m′ Dm,n,i                          while the lower layer optimizes f and r under fixed discrete
+    Ttotal =
+                           ′
+                               rm,n,i,0,m,m′                             decisions. As will be shown below, the lower-layer problem
+               m=1 n=1 i=1    m =1
+                              m′ ̸=m                                     can be decomposed into convex subproblems whose global
+      Nm X
+    M X     i −1 X
+         I JX    M              M                                        optima can be obtained via the KKT conditions.
+    X                           X  ym,n,i,j,m′ ym,n,i,j+1,m′′ Dm,n,i,j
++
+    m=1 n=1 i=1 j=1 m′ =1 m =1  ′′
+                                             rm,n,i,j,m′ ,m′′
+                         m′′ ̸=m′
+                                                                         A. Problem Transformation
+          X Nm X
+          M X    Ji X
+               I X  M
+                      xi,j,m′ ym,n,i,j,m′ Cm,n,i,j                          1) Continuous Resource Allocation Subproblem Under
+      +                                                       . (30)     Fixed Placement and Offloading: From the transmission and
+                                              fm′ ,m,n,i,j
+          m=1 n=1 i=1 j=1 m′ =1                                          computing models in Section III, the system delay consists of
+If the constant access delays are also accumulated, the com-             computing delay and inter-stage transmission delay. Since the
+plete system-level end-to-end delay is given by                          access delay from the user terminal to its affiliated edge node is
+                                                                         hardware-determined and does not participate in optimization,
+                              Nm X
+                            M X  I
+                            X                                            it can be treated as a constant once the placement and
+                Tetotal =                 tacc
+                                           m,n,i + Ttotal .     (31)     offloading decisions are fixed. Assume that the upper-level
+                            m=1 n=1 i=1
+                                                                         DRL has already determined x and y. Then P1 is transformed
+Because the first term in (31) is a constant independent                 into the following continuous resource allocation subproblem:
+of the decision variables, minimizing Tetotal is equivalent to
+minimizing Ttotal . This derivation justifies why the original                               Nm X
+                                                                                           M X    Ji X
+                                                                                                I X  M
+                                                                                           X           xi,j,m′ ym,n,i,j,m′ Cm,n,i,j
+optimization objective can be expressed only by the optimiz-                 P2:    min
+                                                                                     f,r
+                                                                                           m=1 n=1 i=1 j=1 m′ =1
+                                                                                                                            fm′ ,m,n,i,j
+able total delay in (30) without changing the solution to the
+                                                                                          M XNm X I  M
+problem.                                                                                 X           X ym,n,i,1,m′ Dm,n,i
+                                                                                       +
+                                                                                         m=1 n=1 i=1 ′
+                                                                                                         rm,n,i,0,m,m′
+                                                                                                       m =1
+G. Problem Formulation                                                                                 m′ ̸=m
+                                                                               Nm X
+                                                                             M X     i −1 X
+                                                                                  I JX    M            M
+   The optimization goal of this paper is to minimize the total              X                         X  ym,n,i,j,m′ ym,n,i,j+1,m′′ Dm,n,i,j
+system delay by jointly determining staged service placement,            +
+                                                                           m=1 n=1 i=1 j=1 m′ =1 m =1  ′′
+                                                                                                                    rm,n,i,j,m′ ,m′′
+stage-level task offloading, node computing resource alloca-                                    m′′ ̸=m′
+tion, and inter-edge transmission rate allocation. For compact                                                                                       (33)
+description, define the placement-variable set X = {xi,j,m′ },
+the offloading-variable set Y = {ym,n,i,j,m′ }, the computing-           subject to
+allocation set F = {fm′ ,m,n,i,j }, and the link-rate-allocation
+                                                                             0 ≤ fm′ ,m,n,i,j ≤ xi,j,m′ ym,n,i,j,m′ Fm′ ,      ∀m, m′ , n, i, j,
+set R = {rm,n,i,0,m,m′ , rm,n,i,j,m′ ,m′′ }. Based on the fully ex-
+                                                                                                                                             (34)
+panded total-delay expression in (30), the original optimization                        Nm X
+                                                                                      M X    Ji
+                                                                                           I X
+                                                                                      X
+problem is formulated as                                                                               fm′ ,m,n,i,j ≤ Fm′ ,      ∀m′ ,       (35)
+                       minimizex,y,f,r         Ttotal                                m=1 n=1 i=1 j=1
+                P1:                                             (32)
+                                       s.t.    C1 − C11.                             rm,n,i,0,m,m′ ≥ 0,         rm,n,i,j,m′ ,m′′ ≥ 0,        (36)
+Problem P1 jointly optimizes the placement variables x, the
+                                                                               Nm X
+                                                                                  I                          Nm̄ X
+                                                                                                           M X      i −1
+                                                                                                                 I JX
+stage-level offloading variables y, the node computing re-                     X                           X
+source allocation variables f , and the inter-edge rate allocation                       rm,n,i,0,m,m′ +                       rm̄,n̄,i,j,m,m′
+                                                                               n=1 i=1                     m̄=1 n̄=1 i=1 j=1
+variables r. Here, the objective variable Ttotal is defined
+                                                                                                              ′
+in (30), and the feasible set is completely characterized by                        ≤ Rm,m′ ,     ∀m ̸= m .                                  (37)
+constraints C1-C11. Since the decision space includes both
+                                                                         In (33), the first term is the total computing delay under fixed
+binary and continuous variables and the objective function
+                                                                         x and y, the second term is the delay for transmitting the
+contains nonlinear couplings such as reciprocal resource terms,
+                                                                         request from the affiliated node to the first-stage execution
+P1 is a mixed-integer nonlinear programming problem.
+                                                                         node, and the third term is the inter-stage transmission delay
+                                                                         when adjacent stages are processed by different edge nodes.
+     IV. P ROBLEM T RANSFORMATION AND A LGORITHM                            2) Convexity Analysis and Problem Decomposition: Under
+                        D ESIGN                                          fixed x and y, the terms involving f are separable from those
+   In Section III, the original optimization problem P1 has              involving r. Moreover, for any positive constant c, the function
+been established with four types of decision variables: service          c/f is strictly convex on f > 0, and similarly d/r is strictly
+placement x, task offloading y, node computing resource                  convex on r > 0 for any positive d. Since the constraints
+allocation f , and inter-edge link rate allocation r. Since x            in (34)–(37) are linear, the continuous resource allocation
+and y are binary variables whereas f and r are continuous                subproblem is convex.
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                                   8
+
+
+
+Proposition 1. Given fixed placement decisions x and offload-         Since xi,j,m′ ym,n,i,j,m′ = 1 for active task stages, (42)
+ing decisions y, the continuous resource allocation problem           becomes                          r
+P2 can be decomposed into multiple independent node-level                                                Cm,n,i,j
+                                                                                        fm′ ,m,n,i,j =            .         (43)
+computing resource allocation subproblems and link-level                                                  λm′
+bandwidth allocation subproblems, all of which are convex.            Combining (43) with the tight constraint (39), the multiplier
+  The above proposition implies that after the upper-level            is obtained as
+world-model modules determine x and y, the lower-level                          PM PNm PI PJi                                 p         !2
+                                                                                                      j=1 xi,j,m ym,n,i,j,m    Cm,n,i,j
+                                                                                                                ′           ′
+                                                                                  m=1    n=1   i=1
+problem no longer requires high-dimensional joint search              λm′ =                                                                .
+over f and r. Instead, the global optimum can be obtained                                                Fm ′
+analytically through the KKT conditions.                                                                                        (44)
+                                                                      For notational convenience, define
+                                                                                     Nm X
+                                                                                   M X    Ji
+                                                                                        I X
+B. Optimal Node Computing Resource Allocation Based on
+                                                                                   X                                            p
+                                                                        Γm′ =                          xi,j,m′ ym,n,i,j,m′          Cm,n,i,j .   (45)
+KKT                                                                                m=1 n=1 i=1 j=1
+   1) Node-Level Computing Resource Allocation Subprob-                  3) Closed-Form Optimal Solution of Node Computing Re-
+lem: Fix an arbitrary edge node Em′ . Only the task stages sat-       source Allocation: Substituting (44) into (43), we obtain the
+isfying xi,j,m′ ym,n,i,j,m′ = 1 consume computing resources           following theorem.
+on Em′ . The node-level subproblem is therefore
+                                                                      Theorem 1. Given fixed placement decisions x and offloading
+                          Nm X
+                        M X    Ji
+                             I X
+                        X         xi,j,m′ ym,n,i,j,m′ Cm,n,i,j        decisions y, the optimal computing resource allocated by edge
+P2-1:        min
+         fm′ ,m,n,i,j                           fm′ ,m,n,i,j          node Em′ to an active task stage Km,n,i,j is
+                        m=1 n=1 i=1 j=1
+                                                               (38)
+                                                                                                          p
+                                                                                        ∗              Fm′ Cm,n,i,j
+                                                                                       fm ′ ,m,n,i,j =              .          (46)
+subject to                                                                                                 Γm′
+                 Nm X
+               M X    Ji
+                    I X
+                                                                      For inactive task stages, the optimal allocated computing
+                                                                      resource is zero.
+               X
+                                  fm′ ,m,n,i,j ≤ Fm′ ,         (39)
+               m=1 n=1 i=1 j=1                                           Equation (46) shows that, under fixed discrete decisions, the
+                                                                      total computing resource of node Em′ is optimally allocated in
+                           fm′ ,m,n,i,j ≥ 0.                   (40)
+                                                                      proportion to the square root of the stage workload Cm,n,i,j .
+                                                                      By substituting (46) into (38), the minimum total computing
+Proposition 2.                                                        delay on node Em′ can be further written as
+If node Em′ carries at least one active task stage, then
+constraint (26) is tight at the optimum.                                                                   Γ2m′
+                                                                                                                .                                (47)
+                                                                                                           Fm′
+    P Suppose that at the optimum the strict inequal-
+Proof.
+ity     fm′ ,m,n,i,j < Fm′ holds. Since the objective term            C. Optimal Link Bandwidth Allocation Based on KKT
+Cm,n,i,j /fm′ ,m,n,i,j is monotonically decreasing with respect          1) Link-Level Bandwidth Allocation Subproblem: Fix an ar-
+to fm′ ,m,n,i,j , one can further increase the computing resource     bitrary inter-edge link (Em′ , Em′′ ) with m′ ̸= m′′ . According
+allocated to an active task stage while preserving feasibility,       to the task transmission model in Section III, two types of
+thereby strictly decreasing the objective value, which contra-        transmissions may use this link: the first-stage transmission
+dicts optimality.                                                     from the affiliated node to the first-stage execution node,
+                                                                      and the transmission of intermediate results between adjacent
+   2) KKT Derivation for Node Computing Resource Alloca-
+                                                                      stages. The corresponding link-level subproblem is
+tion: Let λm′ ≥ 0 denote the Lagrange multiplier associ-
+ated with the total computing capacity of node Em′ . The                                 Nm′
+                                                                                          I
+Lagrangian function is
+                                                                                         XX ym′ ,n,i,1,m′′ Dm′ ,n,i
+                                                                        P2-2:      min
+                                                                                    n=1 i=1
+                                                                                                       r
+                                                                                            m ,n,i,0,m ,m   ′          ′   ′′
+
+               Nm X
+             M X    Ji
+                  I X
+             X            xi,j,m′ ym,n,i,j,m′ Cm,n,i,j                      M N m I  J i −1
+                                                                            X X X X ym,n,i,j,m′ ym,n,i,j+1,m′′ Dm,n,i,j
+  Lm′ =                                                                 +                                                                        (48)
+          m=1 n=1 i=1 j=1
+                                   fm′ ,m,n,i,j                                                                 rm,n,i,j,m′ ,m′′
+                                                                          m=1 n=1 i=1 j=1
+                  M X Nm X I X Ji
+                                                                      subject to
+                 X
+         + λm′                    fm′ ,m,n,i,j − Fm′  . (41)
+                    m=1 n=1 i=1 j=1                                   Nm′
+                                                                       I                                 Nm X
+                                                                                                       M X     i −1
+                                                                                                            I JX
+                                                                      XX                               X
+                                                                                rm′ ,n,i,0,m′ ,m′′ +                            rm,n,i,j,m′ ,m′′ ≤ Rm′ ,m′′ ,
+For any active task stage, the first-order stationarity condition
+                                                                      n=1 i=1                          m=1 n=1 i=1 j=1
+yields                                                                                                                                           (49)
+             xi,j,m′ ym,n,i,j,m′ Cm,n,i,j
+          −                               + λm′ = 0.         (42)
+                       2
+                      fm ′ ,m,n,i,j
+                                                                                rm′ ,n,i,0,m′ ,m′′ ≥ 0,             rm,n,i,j,m′ ,m′′ ≥ 0.        (50)
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                              9
+
+
+
+Proposition 3.                                                                For an active inter-stage transmission, the optimal bandwidth
+If link (Em′ , Em′′ ) carries at least one active flow, then                  allocation is
+constraint (36) is tight at the optimum.                                                                              p
+   The proof is analogous to that of the node-level subproblem,                             ∗                 Rm′ ,m′′ Dm,n,i,j
+                                                                                           rm,n,i,j,m′ ,m′′ =                   .      (58)
+because each delay term has the form D/r and is monotoni-                                                          Sm′ ,m′′
+cally decreasing with respect to the allocated rate.
+   2) KKT Derivation for Link Bandwidth Allocation: Let                       Inactive transmission flows are allocated zero rate.
+ηm′ ,m′′ ≥ 0 denote the Lagrange multiplier associated with                      Hence, the bandwidth of each active link is optimally
+the bandwidth constraint of link (Em′ , Em′′ ). The Lagrangian                allocated according to the square root of the corresponding
+function is                                                                   transmitted data size. By substituting (57) and (58) into (48),
+               Nm′
+                I                                                             the minimum total transmission delay on link (Em′ , Em′′ ) is
+               XX ym′ ,n,i,1,m′′ Dm′ ,n,i
+  Lm′ ,m′′ =
+                       rm′ ,n,i,0,m′ ,m′′                                                                  2
+           n=1 i=1                                                                                        Sm ′ ,m′′
+          Nm X
+        M X   I JXi −1                                                                                              .                      (59)
+        X              ym,n,i,j,m′ ym,n,i,j+1,m′′ Dm,n,i,j                                                Rm′ ,m′′
+    +
+        m=1 n=1 i=1 j=1
+                                          rm,n,i,j,m′ ,m′′
+                              Nm′
+                               I
+                              XX                                              D. Overall Algorithm Design
+               + ηm′ ,m′′                 rm′ ,n,i,0,m′ ,m′′
+                              n=1 i=1                                            1) World-Model-KKT Hierarchical Solution Framework:
+                    i −1
+              Nm X
+            M X  I JX
+                                                                 !
+            X                                                                 Based on the above derivations, the original problem P1 can
+        +                       rm,n,i,j,m′ ,m′′ − Rm′ ,m′′ . (51)            be transformed into a two-level solution framework. At the
+            m=1 n=1 i=1 j=1
+                                                                              upper level, a DRL agent outputs service placement decisions
+For a first-stage transmission variable, the stationarity condi-              x and task offloading decisions y. At the lower level, x and y
+tion yields                                                                   are treated as inputs, and the optimal node computing resource
+                ym′ ,n,i,1,m′′ Dm′ ,n,i                                       allocation f ∗ and optimal link bandwidth allocation r∗ are
+             −     2                    + ηm′ ,m′′ = 0.     (52)              computed directly by (46), (57), and (58). Since the lower-
+                  rm  ′ ,n,i,0,m′ ,m′′
+                                                                              level solution is obtained in closed form, no additional iterative
+For an active first-stage transmission flow, one has
+                                      s                                       search is needed, and the global optimality of continuous re-
+                                        Dm′ ,n,i                              source allocation under fixed discrete decisions is guaranteed.
+                 rm′ ,n,i,0,m′ ,m′′ =            .                     (53)
+                                        ηm′ ,m′′                                 Moreover, the node-level minimum computing delay is
+                                                                              given by (47), while the link-level minimum transmission
+Similarly, for an active inter-stage transmission flow,
+                                    s                                         delay is given by (59). Therefore, the continuous variables
+                                      Dm,n,i,j                                f and r can be analytically eliminated from the original
+                 rm,n,i,j,m′ ,m′′ =             .                      (54)   formulation, and their optimal responses can be fed back to
+                                       ηm′ ,m′′
+                                                                              the upper-level world-model modules for action scoring, plan-
+For notational convenience, define the square-root aggregate                  ner distillation, and policy optimization, which significantly
+load on link (Em′ , Em′′ ) as                                                 reduces the complexity of the joint optimization process.
+               Nm′
+                I
+               XX                         p                                      2) Algorithm Procedure: The overall World-Model-KKT
+  Sm′ ,m′′ =             ym′ ,n,i,1,m′′    Dm′ ,n,i                           procedure is summarized in Algorithm 1.
+               n=1 i=1
+         Nm X
+       M X     i −1
+            I JX                                                              Theorem 3. Under fixed upper-level placement decisions x
+                                                                              and offloading decisions y, the continuous resource alloca-
+       X                                                   p
+   +                        ym,n,i,j,m′ ym,n,i,j+1,m′′         Dm,n,i,j .
+       m=1 n=1 i=1 j=1                                                        tion pair (f ∗ , r∗ ) given by (46), (57), and (58) satisfies all
+                                                                       (55)   KKT conditions of the corresponding convex subproblems and
+                                                                              therefore constitutes the global optimum of the lower-level
+Combining (53)–(54) with the tight constraint (49), the mul-
+                                                                              continuous resource allocation problem.
+tiplier is                              2
+                                Sm′ ,m′′                                         In summary, the proposed world-model-KKT hierarchical
+                   ηm′ ,m′′ =               .               (56)
+                                Rm′ ,m′′                                      framework effectively transforms the original mixed-integer
+   3) Closed-Form Optimal Link Bandwidth Allocation: Using                    nonlinear optimization problem into a collaborative architec-
+(56), the optimal bandwidth allocation is given in the following              ture consisting of world-model-driven placement and offload-
+theorem.                                                                      ing generation, and KKT-based analytical optimization for
+                                                                              continuous resource allocation. The upper-level decision pro-
+Theorem 2. Given fixed placement decisions x and offload-                     cess improves the efficiency of discrete action generation and
+ing decisions y, the optimal bandwidth allocation on link                     evaluation, whereas the lower-level KKT solution guarantees
+(Em′ , Em′′ ) for an active first-stage transmission is                       the optimality of continuous resource allocation under fixed
+                                          p
+               ∗                  Rm′ ,m′′ Dm′ ,n,i                           discrete decisions, thereby improving both solution efficiency
+             rm′ ,n,i,0,m′ ,m′′ =                   .   (57)                  and theoretical rigor.
+                                       Sm′ ,m′′
+IEEE JOURNAL TEMPLATE DRAFT, 2026                                                                                                                      10
+
+
+
+Algorithm 1 World-Model-KKT-Based Joint Placement, Off-                         [9] X. Dai, Z. Xiao, H. Jiang, M. Lei, G. Min, J. Liu, and S. Dustdar,
+loading, and Continuous Resource Allocation                                         “Offloading dependent tasks in edge computing with unknown system-
+                                                                                    side information,” IEEE Transactions on Services Computing, vol. 16,
+  1: Initialize the edge node set, service set, task set, and all                   no. 6, pp. 4345–4359, 2023.
+     system parameters defined in Section III; construct the                   [10] L. Wang, X. Liu, H. Ding, Y. Hu, K. Peng, and M. Hu, “Energy-
+     training and inference environment.                                            delay-aware joint microservice deployment and request routing with
+                                                                                    DVFS in edge: A reinforcement learning approach,” IEEE Trans-
+  2: for each decision episode do                                                   actions on Computers, vol. 74, no. 1, pp. 1589–1604, 2025, doi:
+  3:    Observe the current system state.                                           10.1109/TC.2025.3535826.
+  4:    The deployment world model generates service place-                    [11] A. A. Ismail, N. E. Khalifa, and R. El-Khoribi, “A survey on resource
+                                                                                    scheduling approaches in multi-access edge computing environment: A
+        ment decisions x, and the scheduler world model gen-                        deep reinforcement learning study,” Cluster Computing, vol. 28, pp. 1–
+        erates stage-level task offloading decisions y.                             35, 2025, doi: 10.1007/s10586-024-04893-7.
+  5:    for each edge node Em′ do
+  6:       Compute the optimal node computing resource allo-
+                    ∗
+           cation fm  ′ ,m,n,i,j according to (46).
+
+  7:    end for
+  8:    for each direct inter-edge link (Em′ , Em′′ ) do
+  9:       Compute the optimal link bandwidth allocation by
+           (57) and (58).
+ 10:    end for
+ 11:    Substitute f ∗ and r∗ into the objective function to ob-
+        tain the total system delay under the current placement
+        and offloading decisions.
+ 12:    Use the resulting total delay to update the deployment
+        world model, the scheduler world model, and the cor-
+        responding decision policies.
+ 13: end for
+ 14: Output the converged placement, offloading, and the cor-
+     responding optimal continuous resource allocation.
+
+
+                             R EFERENCES
+ [1] T. Taleb, H. Barcelo, A. Ksentini, T. M. Bohnert, et al., “A survey
+     on services placement algorithms in integrated cloud-fog/edge comput-
+     ing,” ACM Computing Surveys, vol. 57, no. 11, pp. 1–36, 2025, doi:
+     10.1145/3729214.
+ [2] W. Fan, X. Chun, Z. Fan, R. Zhang, S. Liu, and Y. Liu, “Dual-
+     agent DRL-based service placement, task scheduling, and resource
+     allocation for multi-sensor and multi-user edge computing networks,”
+     IEEE Transactions on Network Science and Engineering, vol. 12, no. 5,
+     pp. 3416–3433, 2025.
+ [3] W. Fan, L. Zhao, X. Liu, Y. Su, S. Li, F. Wu, and Y. Liu, “Col-
+     laborative service placement, task scheduling, and resource alloca-
+     tion for task offloading with edge-cloud cooperation,” IEEE Transac-
+     tions on Mobile Computing, vol. 23, no. 1, pp. 238–256, 2024, doi:
+     10.1109/TMC.2022.3219261.
+ [4] K. Peng, L. Wang, J. He, C. Cai, and M. Hu, “Joint optimization of
+     service deployment and request routing for microservices in mobile edge
+     computing,” IEEE Transactions on Services Computing, vol. 17, no. 3,
+     pp. 1016–1028, 2024.
+ [5] M. Hu, H. Wang, X. Xu, J. He, Y. Hu, T. Deng, and K. Peng, “Joint
+     optimization of microservice deployment and routing in edge via multi-
+     objective deep reinforcement learning,” IEEE Transactions on Network
+     and Service Management, vol. 21, no. 6, pp. 6364–6381, 2024, doi:
+     10.1109/TNSM.2024.3443872.
+ [6] K. Peng, J. He, J. Guo, Y. Liu, J. He, W. Liu, and M. Hu, “Delay-
+     aware optimization of fine-grained microservice deployment and routing
+     in edge via reinforcement learning,” IEEE Transactions on Network
+     Science and Engineering, vol. 11, no. 6, pp. 6024–6037, 2024.
+ [7] C. Wang, H. Yu, X. Li, F. Ma, X. Wang, T. Taleb, and V. C. M. Leung,
+     “Dependency-aware microservice deployment for edge computing: A
+     deep reinforcement learning approach with network representation,”
+     IEEE Transactions on Mobile Computing, vol. 23, no. 12, pp. 14737–
+     14753, 2024.
+ [8] J. Lou, Z. Tang, W. Jia, W. Zhao, and J. Li, “Startup-aware dependent
+     task scheduling with bandwidth constraints in edge computing,” IEEE
+     Transactions on Mobile Computing, vol. 23, no. 2, pp. 1586–1600, 2024,
+     doi: 10.1109/TMC.2023.3238868.
+

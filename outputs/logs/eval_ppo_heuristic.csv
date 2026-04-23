@@ -1,0 +1,2 @@
+deployment,policy,episodes,fast_slots,avg_total_delay,std_total_delay,avg_compute_delay,avg_transmission_delay,avg_requests_per_slot,infeasible_rate,total_replicas,min_stage_replicas,max_stage_replicas,avg_node_replicas,max_node_replicas,avg_storage_util,max_storage_util,avg_memory_util,max_memory_util
+heuristic,ppo,1.0,2.0,8.441281914710999,2.1456289291381836,6.953904151916504,1.4873777627944946,12.0,0.0,26.0,2.0,2.0,2.5999999046325684,3.0,0.20575690269470215,0.2746067941188812,0.14376714825630188,0.19236323237419128

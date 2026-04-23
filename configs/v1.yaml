@@ -1,0 +1,65 @@
+seed: 7
+run_name: v1
+
+system:
+  num_nodes: 10
+  users_per_node: 5
+  num_services: 5
+  service_stages: [2, 3, 2, 4, 2]
+  slow_period: 20
+
+topology:
+  mode: full_mesh
+  bandwidth_min: 60.0
+  bandwidth_max: 120.0
+
+resources:
+  compute_min: 90.0
+  compute_max: 130.0
+  storage_capacity: 90.0
+  memory_capacity: 90.0
+  service_storage_min: 4.0
+  service_storage_max: 9.0
+  service_memory_min: 3.0
+  service_memory_max: 7.0
+
+requests:
+  poisson_lambda: 1.0
+  service_distribution:
+    mode: uniform
+    drift_strength: 0.35
+    drift_period: 8
+  compute_min: 2.0
+  compute_max: 7.0
+  input_data_min: 2.0
+  input_data_max: 6.0
+  stage_data_decay_min: 0.55
+  stage_data_decay_max: 0.85
+  perturb_low: 0.9
+  perturb_high: 1.1
+
+deployment:
+  mode: heuristic
+  min_replicas: 1
+  max_replicas: 2
+
+training:
+  episodes: 60
+  fast_slots_per_episode: 20
+  omega_batch_reward: 0.5
+  device: cpu
+  learning_rate: 0.0003
+  gamma: 0.99
+  clip_ratio: 0.2
+  ppo_epochs: 2
+  minibatch_size: 64
+  max_update_samples: 128
+  entropy_coef: 0.01
+  value_coef: 0.5
+  max_grad_norm: 0.5
+
+model:
+  hidden_dim: 64
+  heads: 4
+  gat_layers: 2
+  request_dim: 32
