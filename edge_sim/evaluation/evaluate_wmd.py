@@ -160,10 +160,14 @@ def evaluate(
                     [encode_candidate_features(env, previous_x, pool[name], name, state) for name in CANDIDATE_NAMES],
                     axis=0,
                 ).astype(np.float32)
-                x_norm = (feature_rows - wmd_ckpt["feature_mean"]) / wmd_ckpt["feature_std"]
+                feature_mean = np.asarray(wmd_ckpt["feature_mean"], dtype=np.float32).reshape(1, -1)
+                feature_std = np.asarray(wmd_ckpt["feature_std"], dtype=np.float32).reshape(1, -1)
+                target_mean = np.asarray(wmd_ckpt["target_mean"], dtype=np.float32).reshape(1, -1)
+                target_std = np.asarray(wmd_ckpt["target_std"], dtype=np.float32).reshape(1, -1)
+                x_norm = (feature_rows - feature_mean) / feature_std
                 with torch.no_grad():
                     pred_norm = wmd_model(torch.from_numpy(x_norm).to(device)).cpu().numpy()
-                pred = pred_norm * wmd_ckpt["target_std"] + wmd_ckpt["target_mean"]
+                pred = pred_norm * target_std + target_mean
                 pred_total_cost = pred[:, 0]
 
                 if policy_name == "wmd_agent":

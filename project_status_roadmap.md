@@ -175,7 +175,7 @@
 - 部署动作设计
 - 慢尺度奖励定义
 
-状态：已完成初版原型，性能仍需改进
+状态：已完成 WM-D v2 原型，已优于 `keep_previous`，下一步进入双智能体联动
 
 ### 阶段 8：双智能体协同
 
@@ -322,12 +322,19 @@
 - 当前最佳 GNN-WM-S：约 `5.0511`
 - `lookahead_delta`: 约 `5.0005`
 
+当前在同配置、未见 seed、快尺度使用 GNN-WM-S 时，慢尺度部署表现大致为：
+
+- `wmd_agent`: 约 `99.0295`
+- `keep_previous`: 约 `99.9298`
+- `history_keep`: 约 `110.0987`
+- `trend_keep`: 约 `110.2112`
+
 结论：
 
 - GNN-WM-S 已经优于简单 greedy。
 - 但提升幅度还不大。
 - 当前最佳 WM-S 还没有追平精确 lookahead。
-- WM-D 初版管线已经打通，但当前还未优于 `keep_previous`，说明慢尺度样本稀缺与特征压缩仍需继续优化。
+- WM-D 经过候选池扩展、特征压缩和排序式训练后，已经优于 `keep_previous`，说明慢尺度世界模型开始具备实际部署价值。
 
 进一步拆分发现：
 
@@ -342,7 +349,6 @@
 - 混合 rollout + hard sample 的 WM-S 数据集
 - 更强的 WM-S 排序学习
 - 更强的闭环调度提升
-- 更强的 WM-D 特征与候选选择
 - Agent-D 的可学习部署策略
 - 双智能体联合闭环
 - 负载扫描实验
@@ -379,7 +385,7 @@
 
 - 把慢尺度部署从启发式推进到世界模型与可学习策略
 
-状态：初版已完成，当前重点是把 WM-D 从“能跑通”提升到“优于 keep_previous/history_keep”
+状态：WM-D v2 已完成并优于 `keep_previous/history_keep`，当前重点转为与 WM-S 形成双智能体闭环
 
 ## 8. 下一阶段建议任务
 
@@ -388,9 +394,9 @@
 1. 完成 mixed rollout GNN-WM-S 数据构建
 2. 增强 difficult decision 样本权重
 3. 重新训练并评估 GNN-WM-S
-4. 继续压缩 WM-D 特征并增强候选部署训练样本
-5. 把 WM-D 提升到优于 `keep_previous`
-6. 在 WM-S 与 WM-D 都相对稳定后，进入双智能体联动
+4. 把 WM-D 接入现有 WM-S，形成完整的双时间尺度闭环
+5. 设计 Agent-D 的可学习动作空间与训练目标
+6. 做双智能体联动评估与消融
 7. 最后再做多负载实验与完整图表整理
 
 ## 9. GitHub 阶段保存
@@ -405,6 +411,8 @@
 - 信息：`Add GNN scheduler world model pipeline`
 - 提交：`2ec0df4`
 - 信息：`Improve GNN WM-S with mixed rollout hard samples`
+- 提交：`45f05e1`
+- 信息：`Add initial WM-D slow-timescale pipeline`
 
 后续建议：
 
