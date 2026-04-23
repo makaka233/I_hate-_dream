@@ -189,7 +189,7 @@
 - 慢周期部署、快时隙调度、KKT 结算的一体化流程
 - 双智能体实验
 
-状态：未完成
+状态：已完成初版闭环，当前重点是缩小 Agent-D 与 WM-D 规划器之间的差距
 
 ### 阶段 9：实验与论文产出
 
@@ -314,6 +314,20 @@
 - [train_wmd.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/train_wmd.py>)
 - [evaluate_wmd.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_wmd.py>)
 
+### 4.8 Agent-D 与双智能体初版闭环
+
+已完成：
+
+- Agent-D 候选部署策略网络
+- 基于 WM-D 数据集的蒸馏训练脚本
+- Agent-D 与 WM-D / WM-S 的双智能体联动评估
+
+关键文件：
+
+- [deployment_policy.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/agents/deployment_policy.py>)
+- [train_agent_d.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/train_agent_d.py>)
+- [evaluate_dual_agent.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_dual_agent.py>)
+
 ## 5. 当前最重要实验结论
 
 当前在 `v2_drift`、未见 seed、heuristic deployment 下，快尺度调度表现大致为：
@@ -329,12 +343,21 @@
 - `history_keep`: 约 `110.0987`
 - `trend_keep`: 约 `110.2112`
 
+当前在同配置、未见 seed、双时间尺度闭环下，联合策略表现大致为：
+
+- `dual_wmd_wms`: 约 `99.0295`
+- `dual_agentd_wms`: 约 `102.3823`
+- `keep_previous_wms`: 约 `103.8138`
+- `history_keep_wms`: 约 `110.0987`
+- `trend_keep_wms`: 约 `110.2112`
+
 结论：
 
 - GNN-WM-S 已经优于简单 greedy。
 - 但提升幅度还不大。
 - 当前最佳 WM-S 还没有追平精确 lookahead。
 - WM-D 经过候选池扩展、特征压缩和排序式训练后，已经优于 `keep_previous`，说明慢尺度世界模型开始具备实际部署价值。
+- Agent-D 初版已经能在双时间尺度闭环中优于 `keep_previous_wms`，但与 `dual_wmd_wms` 仍有明显差距，说明慢尺度策略蒸馏还需要更多样本与更强监督。
 
 进一步拆分发现：
 
@@ -349,8 +372,8 @@
 - 混合 rollout + hard sample 的 WM-S 数据集
 - 更强的 WM-S 排序学习
 - 更强的闭环调度提升
-- Agent-D 的可学习部署策略
-- 双智能体联合闭环
+- 更强的 Agent-D 蒸馏策略
+- Agent-S 的策略蒸馏
 - 负载扫描实验
 - 消融实验
 - 论文图表与结果整理
@@ -385,7 +408,7 @@
 
 - 把慢尺度部署从启发式推进到世界模型与可学习策略
 
-状态：WM-D v2 已完成并优于 `keep_previous/history_keep`，当前重点转为与 WM-S 形成双智能体闭环
+状态：WM-D v2 与 Agent-D 初版已完成，当前重点是缩小 `dual_agentd_wms` 与 `dual_wmd_wms` 的差距
 
 ## 8. 下一阶段建议任务
 
@@ -394,8 +417,8 @@
 1. 完成 mixed rollout GNN-WM-S 数据构建
 2. 增强 difficult decision 样本权重
 3. 重新训练并评估 GNN-WM-S
-4. 把 WM-D 接入现有 WM-S，形成完整的双时间尺度闭环
-5. 设计 Agent-D 的可学习动作空间与训练目标
+4. 扩大慢尺度数据集，强化 Agent-D 对困难决策的学习
+5. 开始 Agent-S 的策略蒸馏，减少快尺度在线规划开销
 6. 做双智能体联动评估与消融
 7. 最后再做多负载实验与完整图表整理
 
