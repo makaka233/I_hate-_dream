@@ -85,10 +85,40 @@ def _split_decisions(num_decisions: int, val_fraction: float, seed: int) -> tupl
     return indices[val_count:], indices[:val_count]
 
 
-def _make_sample_weights(best_candidate: np.ndarray, keep_previous_id: int, hard_weight: float) -> np.ndarray:
+def _decision_stats(
+    total_cost: np.ndarray,
+    best_candidate: np.ndarray,
+    keep_previous_id: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    best_cost = total_cost[np.arange(total_cost.shape[0]), best_candidate]
+    keep_previous_cost = total_cost[:, keep_previous_id]
+    keep_gap = np.maximum(keep_previous_cost - best_cost, 0.0)
+    sorted_cost = np.sort(total_cost, axis=1)
+    second_best = sorted_cost[:, 1] if total_cost.shape[1] > 1 else best_cost.copy()
+    best_margin = np.maximum(second_best - best_cost, 0.0)
+    hard_mask = best_candidate != keep_previous_id
+    return keep_gap.astype(np.float32), best_margin.astype(np.float32), hard_mask
+
+
+def _make_sample_weights(
+    best_candidate: np.ndarray,
+    total_cost: np.ndarray,
+    keep_previous_id: int,
+    hard_weight: float,
+    gap_weight: float,
+    margin_weight: float,
+) -> np.ndarray:
+    keep_gap, best_margin, hard_mask = _decision_stats(total_cost, best_candidate, keep_previous_id)
     hard_mask = best_candidate != keep_previous_id
     weights = np.ones(best_candidate.shape[0], dtype=np.float32)
     weights[hard_mask] = float(hard_weight)
+    positive_gap = keep_gap[keep_gap > 1e-8]
+    gap_scale = float(np.mean(positive_gap)) if positive_gap.size else 1.0
+    weights += float(gap_weight) * (keep_gap / max(gap_scale, 1e-6))
+    positive_margin = best_margin[best_margin > 1e-8]
+    margin_scale = float(np.mean(positive_margin)) if positive_margin.size else 1.0
+    ambiguity = 1.0 / (1.0 + best_margin / max(margin_scale, 1e-6))
+    weights += float(margin_weight) * ambiguity * hard_mask.astype(np.float32)
     return weights
 
 
@@ -108,6 +138,26 @@ def _weighted_teacher_kl(
     student = torch.log_softmax(logits / tau, dim=1)
     loss = F.kl_div(student, teacher, reduction="none").sum(dim=1) * (tau * tau)
     return (loss * sample_weights).sum() / torch.clamp(sample_weights.sum(), min=1.0)
+
+
+def _pairwise_rank_loss(
+    logits: torch.Tensor,
+    total_cost: torch.Tensor,
+    best_candidate: torch.Tensor,
+    sample_weights: torch.Tensor,
+    rank_temperature: float,
+) -> torch.Tensor:
+    batch, num_candidates = logits.shape
+    best_logits = logits.gather(1, best_candidate[:, None]).expand(-1, num_candidates)
+    best_cost = total_cost.gather(1, best_candidate[:, None]).expand(-1, num_candidates)
+    cost_gap = torch.clamp(total_cost - best_cost, min=0.0)
+    gap_scale = torch.clamp(cost_gap.mean(), min=1e-6)
+    pair_weights = cost_gap / gap_scale
+    mask = 1.0 - F.one_hot(best_candidate, num_classes=num_candidates).to(dtype=logits.dtype)
+    tau = max(float(rank_temperature), 1e-6)
+    pair_loss = F.softplus((logits - best_logits) / tau) * pair_weights * mask
+    per_decision = pair_loss.sum(dim=1) / torch.clamp(mask.sum(dim=1), min=1.0)
+    return (per_decision * sample_weights).sum() / torch.clamp(sample_weights.sum(), min=1.0)
 
 
 def _accuracy(logits: np.ndarray, labels: np.ndarray) -> float:
@@ -136,6 +186,10 @@ def train(
     teacher_coef: float,
     teacher_temperature: float,
     hard_weight: float,
+    gap_weight: float,
+    margin_weight: float,
+    pairwise_coef: float,
+    pairwise_temperature: float,
     val_fraction: float,
     seed: int,
     device_name: str,
@@ -157,8 +211,24 @@ def train(
     x_val_n = (x_val - feature_mean) / feature_std
 
     keep_previous_id = 0
-    train_weights = _make_sample_weights(best_train, keep_previous_id, hard_weight)
-    val_weights = _make_sample_weights(best_val, keep_previous_id, hard_weight)
+    train_keep_gap, train_best_margin, train_hard_mask = _decision_stats(cost_train, best_train, keep_previous_id)
+    val_keep_gap, val_best_margin, val_hard_mask = _decision_stats(cost_val, best_val, keep_previous_id)
+    train_weights = _make_sample_weights(
+        best_train,
+        cost_train,
+        keep_previous_id,
+        hard_weight,
+        gap_weight,
+        margin_weight,
+    )
+    val_weights = _make_sample_weights(
+        best_val,
+        cost_val,
+        keep_previous_id,
+        hard_weight,
+        gap_weight,
+        margin_weight,
+    )
 
     torch.manual_seed(seed)
     if torch.cuda.is_available():
@@ -192,7 +262,8 @@ def train(
             logits = model(xb.reshape(-1, xb.shape[-1])).view(xb.shape[0], xb.shape[1])
             ce_loss = _weighted_ce(logits, bestb, wb)
             teacher_loss = _weighted_teacher_kl(logits, cb, teacher_temperature, wb)
-            loss = ce_loss + float(teacher_coef) * teacher_loss
+            pairwise_loss = _pairwise_rank_loss(logits, cb, bestb, wb, pairwise_temperature)
+            loss = ce_loss + float(teacher_coef) * teacher_loss + float(pairwise_coef) * pairwise_loss
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
@@ -221,9 +292,20 @@ def train(
             .numpy()
             * max(float(teacher_temperature), 1e-6) ** 2
         )
+        val_tensor_logits = torch.from_numpy(val_logits.astype(np.float32))
+        pairwise_val = float(
+            _pairwise_rank_loss(
+                val_tensor_logits,
+                torch.from_numpy(cost_val.astype(np.float32)),
+                torch.from_numpy(best_val.astype(np.int64)),
+                torch.from_numpy(val_weights.astype(np.float32)),
+                pairwise_temperature,
+            ).item()
+        )
         val_loss = float(
             ((ce_val + float(teacher_coef) * teacher_val) * val_weights).sum()
             / max(float(val_weights.sum()), 1e-8)
+            + float(pairwise_coef) * pairwise_val
         )
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -250,13 +332,18 @@ def train(
             .reshape(x_val_n.shape[0], x_val_n.shape[1])
         )
     val_pred = np.argmax(val_logits, axis=1)
-    hard_mask = best_val != keep_previous_id
     metrics = {
         "top1_accuracy": _accuracy(val_logits, best_val),
-        "top1_accuracy_hard": _subset_accuracy(val_logits, best_val, hard_mask),
-        "top1_accuracy_easy": _subset_accuracy(val_logits, best_val, ~hard_mask),
-        "hard_ratio": float(np.mean(hard_mask)),
+        "top1_accuracy_hard": _subset_accuracy(val_logits, best_val, val_hard_mask),
+        "top1_accuracy_easy": _subset_accuracy(val_logits, best_val, ~val_hard_mask),
+        "hard_ratio": float(np.mean(val_hard_mask)),
         "avg_regret_total_cost": _avg_regret(cost_val, val_pred, best_val),
+        "avg_keep_gap": float(np.mean(val_keep_gap)),
+        "avg_keep_gap_hard": float(np.mean(val_keep_gap[val_hard_mask])) if np.any(val_hard_mask) else 0.0,
+        "avg_best_margin": float(np.mean(val_best_margin)),
+        "avg_regret_hard": _avg_regret(cost_val[val_hard_mask], val_pred[val_hard_mask], best_val[val_hard_mask])
+        if np.any(val_hard_mask)
+        else 0.0,
         "train_decisions": float(x_train.shape[0]),
         "val_decisions": float(x_val.shape[0]),
         "best_val_loss": best_val_loss,
@@ -278,6 +365,10 @@ def train(
             "teacher_coef": float(teacher_coef),
             "teacher_temperature": float(teacher_temperature),
             "hard_weight": float(hard_weight),
+            "gap_weight": float(gap_weight),
+            "margin_weight": float(margin_weight),
+            "pairwise_coef": float(pairwise_coef),
+            "pairwise_temperature": float(pairwise_temperature),
             "metrics": metrics,
         },
         output_path,
@@ -296,6 +387,10 @@ def main() -> None:
     parser.add_argument("--teacher-coef", type=float, default=0.3)
     parser.add_argument("--teacher-temperature", type=float, default=2.0)
     parser.add_argument("--hard-weight", type=float, default=3.0)
+    parser.add_argument("--gap-weight", type=float, default=1.0)
+    parser.add_argument("--margin-weight", type=float, default=0.75)
+    parser.add_argument("--pairwise-coef", type=float, default=0.5)
+    parser.add_argument("--pairwise-temperature", type=float, default=1.0)
     parser.add_argument("--val-fraction", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--device", default="cpu")
@@ -311,6 +406,10 @@ def main() -> None:
         teacher_coef=float(args.teacher_coef),
         teacher_temperature=float(args.teacher_temperature),
         hard_weight=float(args.hard_weight),
+        gap_weight=float(args.gap_weight),
+        margin_weight=float(args.margin_weight),
+        pairwise_coef=float(args.pairwise_coef),
+        pairwise_temperature=float(args.pairwise_temperature),
         val_fraction=float(args.val_fraction),
         seed=int(args.seed),
         device_name=args.device,

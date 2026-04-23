@@ -351,13 +351,16 @@
 - `history_keep_wms`: 约 `110.0987`
 - `trend_keep_wms`: 约 `110.2112`
 
+在扩大慢尺度数据并强化困难决策训练后，`dual_agentd_wms` 在部分未见 seed 上可进一步提升到约 `98.8408`，甚至超过 `dual_wmd_wms`；但在另一些未见 seed 上仍可能退化到约 `105.2376`，说明当前 Agent-D 的跨 seed 鲁棒性仍不稳定。
+
 结论：
 
 - GNN-WM-S 已经优于简单 greedy。
 - 但提升幅度还不大。
 - 当前最佳 WM-S 还没有追平精确 lookahead。
 - WM-D 经过候选池扩展、特征压缩和排序式训练后，已经优于 `keep_previous`，说明慢尺度世界模型开始具备实际部署价值。
-- Agent-D 初版已经能在双时间尺度闭环中优于 `keep_previous_wms`，但与 `dual_wmd_wms` 仍有明显差距，说明慢尺度策略蒸馏还需要更多样本与更强监督。
+- Agent-D 在扩大慢尺度数据、加入 gap/margin 加权和 pairwise 排序损失后，已经能在部分未见 seed 上逼近甚至超过 `dual_wmd_wms`。
+- 但 Agent-D 的跨 seed 鲁棒性仍不稳定，说明慢尺度策略蒸馏还需要更多样本覆盖与更稳健的保守机制。
 
 进一步拆分发现：
 
@@ -373,6 +376,7 @@
 - 更强的 WM-S 排序学习
 - 更强的闭环调度提升
 - 更强的 Agent-D 蒸馏策略
+- Agent-D 的跨 seed 鲁棒性
 - Agent-S 的策略蒸馏
 - 负载扫描实验
 - 消融实验
@@ -408,7 +412,7 @@
 
 - 把慢尺度部署从启发式推进到世界模型与可学习策略
 
-状态：WM-D v2 与 Agent-D 初版已完成，当前重点是缩小 `dual_agentd_wms` 与 `dual_wmd_wms` 的差距
+状态：WM-D v2 与 Agent-D 强化版已完成，当前重点是提升 `dual_agentd_wms` 的跨 seed 鲁棒性
 
 ## 8. 下一阶段建议任务
 
@@ -417,7 +421,7 @@
 1. 完成 mixed rollout GNN-WM-S 数据构建
 2. 增强 difficult decision 样本权重
 3. 重新训练并评估 GNN-WM-S
-4. 扩大慢尺度数据集，强化 Agent-D 对困难决策的学习
+4. 为 Agent-D 引入更保守的选择机制或价值校准，减少跨 seed 退化
 5. 开始 Agent-S 的策略蒸馏，减少快尺度在线规划开销
 6. 做双智能体联动评估与消融
 7. 最后再做多负载实验与完整图表整理

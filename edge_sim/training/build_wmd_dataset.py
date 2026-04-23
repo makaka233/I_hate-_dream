@@ -18,6 +18,7 @@ from edge_sim.training.wmd_utils import CANDIDATE_NAMES, candidate_pool, encode_
 
 
 TARGET_COLUMNS = ["total_cost", "delay_sum", "migration_cost"]
+KEEP_PREVIOUS_ID = CANDIDATE_NAMES.index("keep_previous")
 
 
 def load_cfg(path: str | Path) -> dict:
@@ -117,6 +118,9 @@ def build_dataset(
     decision_ids: list[int] = []
     candidate_ids: list[int] = []
     best_candidate_ids: list[int] = []
+    hard_mask_rows: list[int] = []
+    best_keep_gap_rows: list[float] = []
+    best_second_margin_rows: list[float] = []
     meta_rows: list[dict[str, float | int | str]] = []
     feature_name_list = feature_names(env)
     decision_id = 0
@@ -165,12 +169,28 @@ def build_dataset(
                 }
             )
 
-        best_name, _ = min(candidate_scores, key=lambda item: item[1])
+        score_map = {name: float(score) for name, score in candidate_scores}
+        sorted_scores = sorted(candidate_scores, key=lambda item: item[1])
+        best_name, best_total_cost = sorted_scores[0]
+        second_best_total_cost = float(sorted_scores[1][1]) if len(sorted_scores) > 1 else float(best_total_cost)
+        keep_previous_cost = float(score_map["keep_previous"])
         best_id = CANDIDATE_NAMES.index(best_name)
+        hard_mask = int(best_id != KEEP_PREVIOUS_ID)
+        best_keep_gap = max(keep_previous_cost - float(best_total_cost), 0.0)
+        best_second_margin = max(float(second_best_total_cost) - float(best_total_cost), 0.0)
         for row in meta_rows[epoch_row_start:]:
             row["best_candidate_id"] = best_id
+            row["best_candidate_name"] = best_name
             row["is_best"] = int(row["candidate_id"] == best_id)
+            row["keep_previous_total_cost"] = keep_previous_cost
+            row["best_total_cost"] = float(best_total_cost)
+            row["best_keep_gap"] = best_keep_gap
+            row["best_second_margin"] = best_second_margin
+            row["hard_mask"] = hard_mask
             best_candidate_ids.append(best_id)
+            hard_mask_rows.append(hard_mask)
+            best_keep_gap_rows.append(best_keep_gap)
+            best_second_margin_rows.append(best_second_margin)
 
         chosen_x = pool[best_name]
         older_observed_matrix = previous_observed_matrix
@@ -201,6 +221,9 @@ def build_dataset(
         decision_ids=np.asarray(decision_ids, dtype=np.int64),
         candidate_ids=np.asarray(candidate_ids, dtype=np.int64),
         best_candidate_ids=np.asarray(best_candidate_ids, dtype=np.int64),
+        hard_mask=np.asarray(hard_mask_rows, dtype=np.int64),
+        best_keep_gap=np.asarray(best_keep_gap_rows, dtype=np.float32),
+        best_second_margin=np.asarray(best_second_margin_rows, dtype=np.float32),
         candidate_names=np.asarray(CANDIDATE_NAMES),
     )
 
@@ -209,6 +232,9 @@ def build_dataset(
         "decisions": float(decision_id),
         "avg_candidates_per_decision": float(len(feature_rows) / max(decision_id, 1)),
         "avg_best_total_cost": float(np.mean([min(group["total_cost"] for group in meta_rows[idx : idx + len(CANDIDATE_NAMES)]) for idx in range(0, len(meta_rows), len(CANDIDATE_NAMES))])) if meta_rows else 0.0,
+        "hard_ratio": float(np.mean(hard_mask_rows)) if hard_mask_rows else 0.0,
+        "avg_best_keep_gap": float(np.mean(best_keep_gap_rows)) if best_keep_gap_rows else 0.0,
+        "avg_best_second_margin": float(np.mean(best_second_margin_rows)) if best_second_margin_rows else 0.0,
     }
     return csv_path, npz_path, summary
 
