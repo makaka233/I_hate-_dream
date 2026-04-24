@@ -275,8 +275,8 @@ def main() -> None:
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", default=None)
     parser.add_argument("--agent-s-min-prob", type=float, default=0.0)
-    parser.add_argument("--agent-s-min-margin", type=float, default=0.0)
-    parser.add_argument("--agent-s-fallback", default="none", choices=["none", "greedy"])
+    parser.add_argument("--agent-s-min-margin", type=float, default=0.05)
+    parser.add_argument("--agent-s-fallback", default="greedy", choices=["none", "greedy"])
     args = parser.parse_args()
 
     cfg = load_cfg(args.config)
