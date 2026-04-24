@@ -64,11 +64,14 @@ def run_agent_s_policy_slot(
     schedules: dict[int, list[int]] = {}
     edge_index = torch.from_numpy(env.edge_index.astype(np.int64)).to(device)
     normalizers = ckpt["normalizers"]
+    guard_fallbacks = 0
+    stage_decisions = 0
 
     for req in requests:
         path: list[int] = []
         prev = int(req.source_node)
         for stage_idx in range(req.num_stages):
+            stage_decisions += 1
             obs = env.graph_observation(deployment, gamma, link_load, req, stage_idx, prev)
             legal_nodes = np.flatnonzero(obs["legal_mask"])
             if legal_nodes.size == 0:
@@ -100,6 +103,7 @@ def run_agent_s_policy_slot(
                 chosen_prob = float(legal_probs[chosen_legal_idx])
                 margin = _prob_margin(legal_probs)
                 if chosen_prob < float(min_prob) or margin < float(min_margin):
+                    guard_fallbacks += 1
                     if fallback_mode == "greedy":
                         best_node = int(legal_nodes[0])
                         best_delta = float("inf")
@@ -132,6 +136,8 @@ def run_agent_s_policy_slot(
         "transmission_delay": allocation.transmission_delay,
         "kkt_virtual_cost": kkt_load_cost(gamma, link_load, env.compute_cap, env.effective_bandwidth),
         "infeasible": float(allocation.infeasible),
+        "guard_fallbacks": float(guard_fallbacks),
+        "guard_ratio": float(guard_fallbacks / max(stage_decisions, 1)),
     }
     for i in range(env.num_services):
         metrics[f"service_{i}"] = float(sum(1 for req in requests if req.service_id == i))
@@ -183,6 +189,8 @@ def evaluate(
         "transmission_delay",
         "kkt_virtual_cost",
         "infeasible",
+        "guard_fallbacks",
+        "guard_ratio",
     ]
     fieldnames.extend([f"service_{i}" for i in range(env.num_services)])
     totals: dict[str, list[float]] = {

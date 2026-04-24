@@ -337,12 +337,18 @@
 - Agent-S 单独评估脚本
 - Agent-S 接入 WM-D / Agent-D 双智能体闭环
 - Agent-S 轻量保守守门与 greedy fallback
+- Agent-S 守门参数多 seed 校准脚本
+- 双智能体多 seed 汇总评估脚本
+- Agent-D 守门参数多 seed 校准脚本
 
 关键文件：
 
 - [scheduler_policy.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/agents/scheduler_policy.py>)
 - [train_agent_s.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/train_agent_s.py>)
 - [evaluate_agent_s.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_agent_s.py>)
+- [calibrate_agent_s_guard.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/calibrate_agent_s_guard.py>)
+- [calibrate_agent_d_guard.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/calibrate_agent_d_guard.py>)
+- [evaluate_dual_agent_multiseed.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_dual_agent_multiseed.py>)
 - [evaluate_wmd.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_wmd.py>)
 - [evaluate_dual_agent.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_dual_agent.py>)
 
@@ -394,6 +400,55 @@
 - keep_previous + guarded Agent-S：约 `88.9120`
 - WM-D + guarded Agent-S：约 `90.3493`
 
+进一步在 5 个未见 seed（`1007, 1107, 1207, 1307, 1407`）上做 Agent-S 守门校准后，得到：
+
+- 最优轻量守门参数：`min_prob = 0.0`，`min_margin = 0.05`，`fallback = greedy`
+- 对应快尺度单独评估均值：`agent_s_policy = 4.3846`
+- 同批次基线：`greedy_delta = 4.3817`，`gnn_wms_planner = 4.3972`
+- 平均 `guard_ratio = 0.0194`
+
+这说明当前 Agent-S 学生策略只需要极轻的边界守门，真正被拦下的阶段决策比例不到 `2%`。
+
+在同一组 5 个未见 seed 上做双智能体多 seed 汇总后：
+
+- `dual_wmd_wms`：均值约 `87.2134`
+- `dual_agentd_wms`：均值约 `88.8277`
+- `keep_previous_wms`：均值约 `89.3956`
+- `dual_agentd_guarded_wms`（fallback=`keep_previous`）：均值约 `89.7483`
+
+把 Agent-D 守门回退方式改成 `wmd_if_gain`，并设置 `fallback_gain = 0.6` 后：
+
+- `dual_agentd_guarded_wms`：均值约 `89.0082`
+- 相比 `keep_previous_wms` 平均改善约 `0.3875`
+- 但仍落后于 `dual_wmd_wms`
+
+进一步做 Agent-D 多 seed 守门校准后，发现：
+
+- 在小规模 3 seed 粗校准中，`min_prob / min_margin / base_gain / max_wmd_gap` 几乎不改变结果，说明当前慢尺度守门的主要敏感项是回退目标本身
+- 在更完整的 5 seed 验证中，最佳默认组合为：
+  - `agentd_min_prob = 0.22`
+  - `agentd_min_margin = 0.05`
+  - `agentd_base_gain = 0.6`
+  - `agentd_max_wmd_gap = 0.75`
+  - `agentd_fallback_mode = wmd_if_gain`
+  - `agentd_fallback_gain = 0.6`
+  - `agent_s_min_prob = 0.0`
+  - `agent_s_min_margin = 0.05`
+  - `agent_s_fallback = greedy`
+
+在这组默认参数下，5 个未见 seed、`episodes = 6` 的双智能体多 seed 汇总结果为：
+
+- `dual_wmd_wms`：均值约 `83.3329`
+- `dual_agentd_guarded_wms`：均值约 `84.2799`
+- `dual_agentd_wms`：均值约 `84.3632`
+- `keep_previous_wms`：均值约 `88.2023`
+
+这说明当前 guarded Agent-D 已经：
+
+- 明显优于 `keep_previous_wms`
+- 略优于未守门的 `dual_agentd_wms`
+- 与 `dual_wmd_wms` 的差距缩小到约 `0.9470`
+
 结论：
 
 - GNN-WM-S 已经优于简单 greedy。
@@ -405,6 +460,10 @@
 - 加入基于 WM-D 预测收益和候选风险级别的守门机制后，`dual_agentd_guarded_wms` 已能在已测 seed 上明显缩小跨 seed 波动，并在保守与进取之间取得更稳的平衡。
 - Agent-S 蒸馏已经跑通，并且学生策略在单独快尺度评估中已经接近教师规划器，说明“先世界模型规划，再蒸馏成策略网络”这条路线成立。
 - 但 Agent-S 目前还没有稳定超越教师规划器，说明快尺度学生策略还需要继续做置信度校准和更多跨 seed 验证。
+- 经过多 seed 校准后，Agent-S 的最佳守门是一个非常轻的 `margin` 规则，说明快尺度学生策略已经基本可用，系统瓶颈正在转移到慢尺度守门策略。
+- 当前双智能体系统在多 seed 平均意义上已经可以略优于 `keep_previous`，但还没有稳定追上 `dual_wmd_wms`，说明下一步应优先继续校准 Agent-D 的守门与回退逻辑，而不是重新大改 Agent-S 结构。
+- 进一步的 Agent-D 守门校准表明，当前阶段真正关键的是“回退到哪里”，而不是继续细抠 `min_prob / min_margin` 这类弱敏感参数。
+- 在当前配置下，`wmd_if_gain` 已经成为更合适的默认慢尺度回退方式。
 
 进一步拆分发现：
 
@@ -420,39 +479,38 @@
 - 更强的 WM-S 排序学习
 - 更强的闭环调度提升
 - 更强的 Agent-D 蒸馏策略
-- Agent-D 的多 seed 系统评估
-- Agent-S 的多 seed 系统评估与阈值校准
+- 更大样本的 Agent-S / Agent-D 组合多 seed 统计
 - 负载扫描实验
 - 消融实验
 - 论文图表与结果整理
 
 ## 7. 当前优先级
 
-### P0：做 Agent-S / 双智能体的多 seed 统计验证
+### P0：继续校准 Agent-D 守门与回退逻辑
 
 目的：
 
-- 确认蒸馏后的快尺度执行器在系统闭环里是否稳定有效
+- 让双智能体系统在更大样本多 seed 上稳定逼近 `dual_wmd_wms`
 
 当前方向：
 
-- 固定当前 guarded Agent-S 参数
-- 与 guarded Agent-D 组合做更多未见 seed 评估
-- 统计平均收益、最坏 seed 退化和触发频率
+- 固定 `wmd_if_gain` 为默认回退方式
+- 在更多 unseen seed 上验证当前默认参数
+- 观察最坏 seed、均值和回退触发分布
 
 状态：进行中
 
-### P1：继续增强 Agent-S 学生策略
+### P1：扩大双智能体多 seed 统计
 
 目的：
 
-- 让快尺度学生策略更稳定逼近教师规划器
+- 作为进入大规模训练前的门槛验证
 
 当前方向：
 
-- 蒸馏损失与排序损失微调
-- 置信度阈值与 fallback 规则校准
-- 困难决策样本的进一步强化
+- 扩展到更多 unseen seed
+- 汇总均值、方差、最坏 seed 与胜率
+- 验证当前默认慢尺度守门参数是否足够稳定
 
 ### P2：负载分层实验
 
@@ -466,9 +524,9 @@
 
 建议按以下顺序推进：
 
-1. 固定当前 guarded Agent-S 参数并做更系统的多 seed 统计评估
-2. 统计 Agent-S 与 Agent-D 的守门触发频率、收益和最坏 seed 表现
-3. 继续微调 Agent-S 蒸馏损失与阈值校准
+1. 继续做 Agent-D 守门参数的多 seed 校准
+2. 固定当前默认双智能体参数，扩大 unseen seed 统计样本
+3. 统计 Agent-D 守门触发频率、回退去向和收益分布
 4. 做双智能体联动消融
 5. 在默认配置稳定后再开展多负载实验
 6. 最后整理完整图表与论文结果材料
@@ -495,6 +553,10 @@
 - 信息：`Strengthen Agent-D with hard slow-scale decisions`
 - 提交：`8197543`
 - 信息：`Add guarded Agent-D evaluation and fairness fixes`
+- 提交：`fb9e07c`
+- 信息：`Add Agent-S distillation pipeline`
+- 提交：`ecb0c0a`
+- 信息：`Add multi-seed guard calibration tools`
 
 后续建议：
 
