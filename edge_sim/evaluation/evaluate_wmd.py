@@ -11,6 +11,7 @@ import yaml
 from edge_sim.agents.deployment_world_model import DeploymentWorldModel
 from edge_sim.env.dynamic_deployment import deployment_change_count
 from edge_sim.env.edge_env import EdgeEnv
+from edge_sim.evaluation.evaluate_agent_s import load_agent_s, run_agent_s_policy_slot
 from edge_sim.evaluation.evaluate_wms_gnn import load_gnn_wms, run_gnn_wms_planner_slot
 from edge_sim.evaluation.policies import run_greedy_delta_slot, run_lookahead_delta_slot
 from edge_sim.optim.kkt_allocator import KKTAllocator
@@ -42,7 +43,11 @@ def load_fast_evaluator(
 ) -> tuple[object | None, torch.device]:
     device = torch.device(device_name)
     if fast_policy != "gnn_wms":
-        return None, device
+        if fast_policy != "agent_s":
+            return None, device
+        if checkpoint_path is None:
+            raise ValueError("fast-policy checkpoint required for agent_s evaluation.")
+        return load_agent_s(checkpoint_path, device), device
     if checkpoint_path is None:
         raise ValueError("fast-policy checkpoint required for gnn_wms evaluation.")
     return load_gnn_wms(checkpoint_path, device), device
@@ -60,6 +65,9 @@ def evaluate_epoch_cost(
     future_weight: float,
     wm_margin: float,
     device: torch.device,
+    agent_s_min_prob: float = 0.0,
+    agent_s_min_margin: float = 0.0,
+    agent_s_fallback: str = "none",
 ) -> tuple[float, float, float]:
     delay_sum = 0.0
     if fast_policy == "greedy_delta":
@@ -94,6 +102,24 @@ def evaluate_epoch_cost(
                 wm_margin=wm_margin,
                 device=device,
             )["total_delay"]
+    elif fast_policy == "agent_s":
+        if loaded_fast_model is None:
+            raise RuntimeError("Agent-S evaluator requested but no model was loaded.")
+        model, ckpt = loaded_fast_model
+        for batch in batches:
+            delay_sum += run_agent_s_policy_slot(
+                env,
+                allocator,
+                deployment,
+                model,
+                ckpt,
+                requests=batch,
+                slow_epoch=epoch,
+                device=device,
+                min_prob=agent_s_min_prob,
+                min_margin=agent_s_min_margin,
+                fallback_mode=agent_s_fallback,
+            )["total_delay"]
     else:
         raise ValueError(f"Unsupported fast_policy={fast_policy!r}")
     return float(delay_sum + migration_cost), float(delay_sum), float(migration_cost)
@@ -111,6 +137,9 @@ def evaluate(
     eval_seed: int,
     device_name: str,
     output_path: str | Path | None,
+    agent_s_min_prob: float = 0.0,
+    agent_s_min_margin: float = 0.0,
+    agent_s_fallback: str = "none",
 ) -> tuple[Path, dict[str, dict[str, float]]]:
     cfg = dict(cfg)
     cfg["seed"] = int(eval_seed)
@@ -199,6 +228,9 @@ def evaluate(
                     future_weight,
                     wm_margin,
                     fast_device,
+                    agent_s_min_prob=agent_s_min_prob,
+                    agent_s_min_margin=agent_s_min_margin,
+                    agent_s_fallback=agent_s_fallback,
                 )
                 writer.writerow(
                     {
@@ -233,7 +265,7 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", default="configs/v2_drift.yaml")
     parser.add_argument("--checkpoint", default="outputs/wmd/v2_drift_gnn_wms_dataset_model.pt")
-    parser.add_argument("--fast-policy", default="gnn_wms", choices=["greedy_delta", "lookahead_delta", "gnn_wms"])
+    parser.add_argument("--fast-policy", default="gnn_wms", choices=["greedy_delta", "lookahead_delta", "gnn_wms", "agent_s"])
     parser.add_argument("--fast-checkpoint", default="outputs/wms/v2_drift_gnn_wms_mixed_hard_model.pt")
     parser.add_argument("--episodes", type=int, default=16)
     parser.add_argument("--fast-slots", type=int, default=None)
@@ -242,12 +274,15 @@ def main() -> None:
     parser.add_argument("--eval-seed", type=int, default=None)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--output", default=None)
+    parser.add_argument("--agent-s-min-prob", type=float, default=0.0)
+    parser.add_argument("--agent-s-min-margin", type=float, default=0.0)
+    parser.add_argument("--agent-s-fallback", default="none", choices=["none", "greedy"])
     args = parser.parse_args()
 
     cfg = load_cfg(args.config)
     fast_slots = int(args.fast_slots or cfg["system"]["slow_period"])
     eval_seed = int(args.eval_seed if args.eval_seed is not None else int(cfg["seed"]) + 2000)
-    fast_checkpoint = None if args.fast_policy != "gnn_wms" else args.fast_checkpoint
+    fast_checkpoint = None if args.fast_policy not in {"gnn_wms", "agent_s"} else args.fast_checkpoint
     output_path, summary = evaluate(
         cfg=cfg,
         checkpoint_path=args.checkpoint,
@@ -260,6 +295,9 @@ def main() -> None:
         eval_seed=eval_seed,
         device_name=args.device,
         output_path=args.output,
+        agent_s_min_prob=float(args.agent_s_min_prob),
+        agent_s_min_margin=float(args.agent_s_min_margin),
+        agent_s_fallback=args.agent_s_fallback,
     )
     print("WM-D evaluation")
     for policy, metrics in summary.items():

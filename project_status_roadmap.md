@@ -328,6 +328,24 @@
 - [train_agent_d.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/train_agent_d.py>)
 - [evaluate_dual_agent.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_dual_agent.py>)
 
+### 4.9 Agent-S 蒸馏与快尺度策略执行器
+
+已完成：
+
+- Agent-S 学生策略网络 `SchedulerGNNPolicy`
+- 基于 GNN-WM-S 数据集的快尺度蒸馏训练脚本
+- Agent-S 单独评估脚本
+- Agent-S 接入 WM-D / Agent-D 双智能体闭环
+- Agent-S 轻量保守守门与 greedy fallback
+
+关键文件：
+
+- [scheduler_policy.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/agents/scheduler_policy.py>)
+- [train_agent_s.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/training/train_agent_s.py>)
+- [evaluate_agent_s.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_agent_s.py>)
+- [evaluate_wmd.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_wmd.py>)
+- [evaluate_dual_agent.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_dual_agent.py>)
+
 ## 5. 当前最重要实验结论
 
 当前在 `v2_drift`、未见 seed、heuristic deployment 下，快尺度调度表现大致为：
@@ -359,6 +377,23 @@
 - seed `1207`：约 `94.6930`，与 `keep_previous_wms` 持平，明显优于原始 `dual_agentd_wms` 的约 `105.2376`
 - seed `1407`：约 `68.5191`，优于 `dual_wmd_wms` 的约 `72.0820` 和 `keep_previous_wms` 的约 `72.4179`
 
+在 Agent-S 蒸馏后，学生策略训练验证结果大致为：
+
+- `top1_accuracy`: 约 `0.9507`
+- `top1_accuracy_hard`: 约 `0.7312`
+- `avg_regret_target_score`: 约 `0.0014`
+
+在未见 seed 的单独快尺度评估中，guarded Agent-S 已接近 GNN-WM-S 规划器：
+
+- seed `1007`：`agent_s_policy` 约 `5.0005`，优于 `greedy_delta` 的约 `5.0103`，接近 `gnn_wms_planner` 的约 `4.9967`
+- seed `1207`：`agent_s_policy` 约 `4.6351`，较原始学生策略有所改善，但仍落后于 `gnn_wms_planner` 的约 `4.6225`
+
+在 guarded Agent-S 接入双智能体闭环后，三组未见 seed 的平均总成本约为：
+
+- guarded Agent-D + guarded Agent-S：约 `87.7474`
+- keep_previous + guarded Agent-S：约 `88.9120`
+- WM-D + guarded Agent-S：约 `90.3493`
+
 结论：
 
 - GNN-WM-S 已经优于简单 greedy。
@@ -368,6 +403,8 @@
 - Agent-D 在扩大慢尺度数据、加入 gap/margin 加权和 pairwise 排序损失后，已经能在部分未见 seed 上逼近甚至超过 `dual_wmd_wms`。
 - 但 Agent-D 的跨 seed 鲁棒性仍不稳定，说明慢尺度策略蒸馏还需要更多样本覆盖与更稳健的保守机制。
 - 加入基于 WM-D 预测收益和候选风险级别的守门机制后，`dual_agentd_guarded_wms` 已能在已测 seed 上明显缩小跨 seed 波动，并在保守与进取之间取得更稳的平衡。
+- Agent-S 蒸馏已经跑通，并且学生策略在单独快尺度评估中已经接近教师规划器，说明“先世界模型规划，再蒸馏成策略网络”这条路线成立。
+- 但 Agent-S 目前还没有稳定超越教师规划器，说明快尺度学生策略还需要继续做置信度校准和更多跨 seed 验证。
 
 进一步拆分发现：
 
@@ -384,54 +421,57 @@
 - 更强的闭环调度提升
 - 更强的 Agent-D 蒸馏策略
 - Agent-D 的多 seed 系统评估
-- Agent-S 的策略蒸馏
+- Agent-S 的多 seed 系统评估与阈值校准
 - 负载扫描实验
 - 消融实验
 - 论文图表与结果整理
 
 ## 7. 当前优先级
 
-### P0：继续增强 WM-S
+### P0：做 Agent-S / 双智能体的多 seed 统计验证
 
 目的：
 
-- 让快尺度调度在闭环里明显逼近 `lookahead_delta`
+- 确认蒸馏后的快尺度执行器在系统闭环里是否稳定有效
 
 当前方向：
 
-- mixed rollout 数据
-- hard sample 强化
-- 排序目标继续改进
+- 固定当前 guarded Agent-S 参数
+- 与 guarded Agent-D 组合做更多未见 seed 评估
+- 统计平均收益、最坏 seed 退化和触发频率
 
 状态：进行中
 
-### P1：负载分层实验
+### P1：继续增强 Agent-S 学生策略
 
 目的：
 
-- 证明在更高负载下，WM-S 的优势会被放大
+- 让快尺度学生策略更稳定逼近教师规划器
 
-当前状态：暂缓，等待用户确认后执行
+当前方向：
 
-### P2：WM-D 与 Agent-D
+- 蒸馏损失与排序损失微调
+- 置信度阈值与 fallback 规则校准
+- 困难决策样本的进一步强化
+
+### P2：负载分层实验
 
 目的：
 
-- 把慢尺度部署从启发式推进到世界模型与可学习策略
+- 证明在更高负载下，双智能体方案的优势会被放大
 
-状态：WM-D v2、Agent-D 强化版和 guarded Agent-D 已完成，当前重点是做更系统的多 seed 验证并推进 Agent-S 蒸馏
+当前状态：暂缓，待双智能体默认配置固定后执行
 
 ## 8. 下一阶段建议任务
 
 建议按以下顺序推进：
 
-1. 完成 mixed rollout GNN-WM-S 数据构建
-2. 增强 difficult decision 样本权重
-3. 重新训练并评估 GNN-WM-S
-4. 对 `dual_agentd_guarded_wms` 做更系统的多 seed 统计评估
-5. 开始 Agent-S 的策略蒸馏，减少快尺度在线规划开销
-6. 做双智能体联动评估与消融
-7. 最后再做多负载实验与完整图表整理
+1. 固定当前 guarded Agent-S 参数并做更系统的多 seed 统计评估
+2. 统计 Agent-S 与 Agent-D 的守门触发频率、收益和最坏 seed 表现
+3. 继续微调 Agent-S 蒸馏损失与阈值校准
+4. 做双智能体联动消融
+5. 在默认配置稳定后再开展多负载实验
+6. 最后整理完整图表与论文结果材料
 
 ## 9. GitHub 阶段保存
 
@@ -447,6 +487,14 @@
 - 信息：`Improve GNN WM-S with mixed rollout hard samples`
 - 提交：`45f05e1`
 - 信息：`Add initial WM-D slow-timescale pipeline`
+- 提交：`24be7c3`
+- 信息：`Improve WM-D candidate ranking and beat keep_previous`
+- 提交：`53d738f`
+- 信息：`Add Agent-D distillation and dual-agent evaluation`
+- 提交：`6ad1bd6`
+- 信息：`Strengthen Agent-D with hard slow-scale decisions`
+- 提交：`8197543`
+- 信息：`Add guarded Agent-D evaluation and fairness fixes`
 
 后续建议：
 

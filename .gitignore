@@ -10,5 +10,8 @@ outputs/wmd/*.yaml
 outputs/agent_d/*.csv
 outputs/agent_d/*.npz
 outputs/agent_d/*.pt
+outputs/agent_s/*.csv
+outputs/agent_s/*.npz
+outputs/agent_s/*.pt
 outputs/logs/*.csv
 outputs/*.pt

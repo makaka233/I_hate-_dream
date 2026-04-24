@@ -171,6 +171,9 @@ def evaluate(
     agentd_max_wmd_gap: float,
     agentd_fallback_mode: str,
     agentd_fallback_gain: float,
+    agent_s_min_prob: float,
+    agent_s_min_margin: float,
+    agent_s_fallback: str,
 ) -> tuple[Path, dict[str, dict[str, float]]]:
     cfg = dict(cfg)
     cfg["seed"] = int(eval_seed)
@@ -361,6 +364,9 @@ def evaluate(
                     future_weight,
                     wm_margin,
                     fast_device,
+                    agent_s_min_prob=agent_s_min_prob,
+                    agent_s_min_margin=agent_s_min_margin,
+                    agent_s_fallback=agent_s_fallback,
                 )
                 writer.writerow(
                     {
@@ -399,7 +405,7 @@ def main() -> None:
     parser.add_argument("--config", default="configs/v2_drift.yaml")
     parser.add_argument("--wmd-checkpoint", default="outputs/wmd/v2_drift_wmd_v2_multiseed_model.pt")
     parser.add_argument("--agentd-checkpoint", default="outputs/agent_d/v2_drift_agent_d_v2_multiseed_model.pt")
-    parser.add_argument("--fast-policy", default="gnn_wms", choices=["greedy_delta", "lookahead_delta", "gnn_wms"])
+    parser.add_argument("--fast-policy", default="gnn_wms", choices=["greedy_delta", "lookahead_delta", "gnn_wms", "agent_s"])
     parser.add_argument("--fast-checkpoint", default="outputs/wms/v2_drift_gnn_wms_mixed_hard_model.pt")
     parser.add_argument("--episodes", type=int, default=12)
     parser.add_argument("--fast-slots", type=int, default=None)
@@ -416,12 +422,15 @@ def main() -> None:
     parser.add_argument("--agentd-max-wmd-gap", type=float, default=0.75)
     parser.add_argument("--agentd-fallback-mode", default="keep_previous", choices=["keep_previous", "wmd_if_gain"])
     parser.add_argument("--agentd-fallback-gain", type=float, default=1.5)
+    parser.add_argument("--agent-s-min-prob", type=float, default=0.0)
+    parser.add_argument("--agent-s-min-margin", type=float, default=0.0)
+    parser.add_argument("--agent-s-fallback", default="none", choices=["none", "greedy"])
     args = parser.parse_args()
 
     cfg = load_cfg(args.config)
     fast_slots = int(args.fast_slots or cfg["system"]["slow_period"])
     eval_seed = int(args.eval_seed if args.eval_seed is not None else int(cfg["seed"]) + 3000)
-    fast_checkpoint = None if args.fast_policy != "gnn_wms" else args.fast_checkpoint
+    fast_checkpoint = None if args.fast_policy not in {"gnn_wms", "agent_s"} else args.fast_checkpoint
     output_path, summary = evaluate(
         cfg=cfg,
         wmd_checkpoint_path=args.wmd_checkpoint,
@@ -443,6 +452,9 @@ def main() -> None:
         agentd_max_wmd_gap=float(args.agentd_max_wmd_gap),
         agentd_fallback_mode=args.agentd_fallback_mode,
         agentd_fallback_gain=float(args.agentd_fallback_gain),
+        agent_s_min_prob=float(args.agent_s_min_prob),
+        agent_s_min_margin=float(args.agent_s_min_margin),
+        agent_s_fallback=args.agent_s_fallback,
     )
     print("Dual-agent evaluation")
     for policy, metrics in summary.items():
