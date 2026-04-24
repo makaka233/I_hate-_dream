@@ -342,6 +342,7 @@
 - Agent-S 守门参数多 seed 校准脚本
 - 双智能体多 seed 汇总评估脚本
 - Agent-D 守门参数多 seed 校准脚本
+- V2 多负载大规模测试脚本
 
 关键文件：
 
@@ -351,6 +352,7 @@
 - [calibrate_agent_s_guard.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/calibrate_agent_s_guard.py>)
 - [calibrate_agent_d_guard.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/calibrate_agent_d_guard.py>)
 - [evaluate_dual_agent_multiseed.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_dual_agent_multiseed.py>)
+- [run_v2_load_sweep.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/run_v2_load_sweep.py>)
 - [evaluate_wmd.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_wmd.py>)
 - [evaluate_dual_agent.py](<C:/Users/1/Desktop/I_hate _dream/edge_sim/evaluation/evaluate_dual_agent.py>)
 
@@ -497,6 +499,30 @@
 - **V2 性能对照配置**：保留 raw `dual_agentd_wms` 作为高均值潜力对照线
 - **下一阶段**：进入大规模测试，优先做多负载与更大样本统计
 
+进一步完成第一轮 V2 多负载大规模测试后，在同一组 holdout 12 个 unseen seed 上得到：
+
+- 轻载 `lambda = 0.6`
+  - `dual_wmd_wms`：约 `39.8378`
+  - `keep_previous_wms`：约 `40.4412`
+  - `dual_agentd_guarded_wms`：约 `40.5295`
+  - 说明轻载下各方法差距很小，guarded 主线与 `keep_previous` 基本接近
+- 中载 `lambda = 1.0`
+  - `dual_wmd_wms`：约 `88.9010`
+  - `keep_previous_wms`：约 `91.5583`
+  - `dual_agentd_guarded_wms`：约 `91.1345`
+  - 说明主线默认配置开始稳定优于 `keep_previous`
+- 重载 `lambda = 1.6`
+  - `dual_wmd_wms`：约 `196.3224`
+  - `keep_previous_wms`：约 `200.3460`
+  - `dual_agentd_guarded_wms`：约 `200.0796`
+  - 说明在更高负载下，主线默认配置依然保持对 `keep_previous` 的优势
+
+这组结果与前面的判断一致：
+
+- `dual_wmd_wms` 仍然是当前最强教师/规划器上界
+- `dual_agentd_wms` 在中载和重载下往往有更好的均值潜力
+- `dual_agentd_guarded_wms` 作为 V2 主线默认配置，在稳健性上更适合作为正式大规模测试主结果
+
 结论：
 
 - GNN-WM-S 已经优于简单 greedy。
@@ -514,6 +540,7 @@
 - 进一步扩大到 10 个 unseen seed 后发现，`wmd_if_gain` 更偏向均值优化，而 `keep_previous` 回退更偏向稳健性优化。
 - 对当前 V2 阶段而言，稳健性比极小的均值收益更重要，因此默认脚本参数改为稳健版守门配置。
 - 在 holdout 12 个 unseen seed 上，稳健版默认配置依然优于 `keep_previous`，说明它已经通过“进入 V2 大规模测试”的门槛验证。
+- 第一轮多负载大规模测试已经完成，结果表明：轻载差距很小，中载与重载下主线默认配置能稳定优于 `keep_previous`，与预期一致。
 
 进一步拆分发现：
 
@@ -530,7 +557,7 @@
 - 更强的闭环调度提升
 - 更强的 Agent-D 蒸馏策略
 - 稳健版默认参数下的更大样本多 seed 复验
-- 负载扫描实验
+- 更完整的多负载实验与图表整理
 - 消融实验
 - 论文图表与结果整理
 
@@ -557,13 +584,13 @@
 
 目的：
 
-- 让 V2 主线配置在大规模测试中稳定成立
+- 让 V2 主线配置在更完整的大规模实验矩阵中稳定成立
 
 当前方向：
 
 - 固定稳健版默认守门参数
-- 进入多负载实验
-- 扩大统计样本并保留 raw Agent-D 作为性能对照
+- 在已完成的第一轮多负载结果基础上继续扩样本
+- 保留 raw Agent-D 作为性能对照
 
 状态：进行中
 
@@ -571,7 +598,7 @@
 
 目的：
 
-- 为 V2 完整收口提供统计支撑
+- 为 V2 完整收口和最终图表提供统计支撑
 
 当前方向：
 
@@ -592,8 +619,8 @@
 建议按以下顺序推进：
 
 1. 继续做 Agent-D 守门参数的多 seed 校准
-2. 固定当前默认双智能体参数，进入多负载实验
-3. 扩大 unseen seed 统计样本，并保留 raw Agent-D 作为性能对照
+2. 固定当前默认双智能体参数，扩充多负载样本与统计规模
+3. 保留 raw Agent-D 作为性能对照线
 4. 统计 Agent-D 守门触发频率、回退去向和收益分布
 5. 做双智能体联动消融
 6. 最后整理完整图表与论文结果材料
